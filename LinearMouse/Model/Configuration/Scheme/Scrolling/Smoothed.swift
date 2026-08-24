@@ -41,6 +41,7 @@ extension Scheme.Scrolling {
         var acceleration: Decimal?
         var inertia: Decimal?
         var bouncing: Bool?
+        var inputScale: Decimal?
 
         init() {}
 
@@ -51,7 +52,8 @@ extension Scheme.Scrolling {
             speed: Decimal? = nil,
             acceleration: Decimal? = nil,
             inertia: Decimal? = nil,
-            bouncing: Bool? = nil
+            bouncing: Bool? = nil,
+            inputScale: Decimal? = nil
         ) {
             self.enabled = enabled
             self.preset = preset
@@ -60,6 +62,7 @@ extension Scheme.Scrolling {
             self.acceleration = acceleration
             self.inertia = inertia
             self.bouncing = bouncing
+            self.inputScale = inputScale
         }
     }
 }
@@ -69,6 +72,7 @@ extension Scheme.Scrolling.Smoothed {
     static let speedRange: ClosedRange<Double> = 0.0 ... 8.0
     static let accelerationRange: ClosedRange<Double> = 0.0 ... 8.0
     static let inertiaRange: ClosedRange<Double> = 0.0 ... 8.0
+    static let inputScaleRange: ClosedRange<Double> = 0.001 ... 10.0
 
     var resolvedPreset: Preset {
         preset ?? .defaultPreset
@@ -113,6 +117,10 @@ extension Scheme.Scrolling.Smoothed {
 
         if let bouncing {
             smoothed.bouncing = bouncing
+        }
+
+        if let inputScale {
+            smoothed.inputScale = inputScale
         }
     }
 

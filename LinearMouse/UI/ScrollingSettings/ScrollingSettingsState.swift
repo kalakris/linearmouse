@@ -448,7 +448,9 @@ extension ScrollingSettingsState {
             setSmoothedConfiguration(makeCustomSmoothedConfiguration())
         } else {
             var configuration = preset.defaultConfiguration
-            configuration.bouncing = makeEditableSmoothedConfiguration().allowsBouncing
+            let editable = makeEditableSmoothedConfiguration()
+            configuration.bouncing = editable.allowsBouncing
+            configuration.inputScale = editable.inputScale
             setSmoothedConfiguration(configuration)
         }
     }

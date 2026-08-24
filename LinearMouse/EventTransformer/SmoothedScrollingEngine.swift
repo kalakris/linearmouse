@@ -77,6 +77,15 @@ final class SmoothedScrollingEngine {
                 .clamped(to: Scheme.Scrolling.Smoothed.inertiaRange)
         }
 
+        /// Pre-scale applied to raw input deltas before any velocity math.
+        /// Lets high-resolution sources (e.g. trackpads reporting undivided
+        /// multi-unit wheel deltas) be divided down into the detent-sized
+        /// range the engine's curves are tuned for.
+        var inputScale: Double {
+            (configuration.inputScale?.asTruncatedDouble ?? 1)
+                .clamped(to: Scheme.Scrolling.Smoothed.inputScaleRange)
+        }
+
         func desiredVelocity(for input: Double) -> Double {
             guard input != 0 else {
                 return 0
@@ -300,8 +309,8 @@ final class SmoothedScrollingEngine {
         timestamp: TimeInterval,
         inputKind: InputKind = .wheel
     ) {
-        var deltaX = rawDeltaX
-        var deltaY = rawDeltaY
+        var deltaX = rawDeltaX * inputScale(for: horizontalBehavior)
+        var deltaY = rawDeltaY * inputScale(for: verticalBehavior)
 
         if sessionState == .momentum {
             cancelOpposingMomentum(deltaX: &deltaX, deltaY: &deltaY)
@@ -326,6 +335,15 @@ final class SmoothedScrollingEngine {
 
         if lastTickTimestamp == nil {
             lastTickTimestamp = timestamp
+        }
+    }
+
+    private func inputScale(for behavior: AxisBehavior) -> Double {
+        switch behavior {
+        case .passthrough:
+            return 1
+        case let .smoothed(tuning):
+            return tuning.inputScale
         }
     }
 
