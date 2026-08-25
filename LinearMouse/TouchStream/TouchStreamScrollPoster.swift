@@ -3,7 +3,6 @@
 
 import CoreGraphics
 import Foundation
-import GestureKit
 import os.log
 
 /// Posts `TouchScrollEngine.Event`s as phased continuous scroll events,
@@ -24,10 +23,11 @@ final class TouchStreamScrollPoster {
     private let eventSink: (CGEvent) -> Void
 
     private var pointDeltaAccumulator = SmoothedScrollPointDeltaAccumulator()
-    private var gestureScrollSeriesActive = false
+    private let gestureSeriesPoster: GestureScrollSeriesPoster
 
     init(eventSink: @escaping (CGEvent) -> Void = { $0.post(tap: .cgSessionEventTap) }) {
         self.eventSink = eventSink
+        gestureSeriesPoster = GestureScrollSeriesPoster(eventSink: eventSink)
     }
 
     func post(_ engineEvent: TouchScrollEngine.Event) {
@@ -84,7 +84,12 @@ final class TouchStreamScrollPoster {
         event.flags = flags
         event.isLinearMouseSyntheticEvent = true
 
-        postGestureScrollCompanionsIfNeeded(scrollPhase: scrollPhase, deltaY: deltaY, flags: flags)
+        gestureSeriesPoster.postCompanionsIfNeeded(
+            scrollPhase: scrollPhase,
+            deltaX: 0,
+            deltaY: deltaY,
+            flags: flags
+        )
         eventSink(event)
 
         if engineEvent == .momentumEnded {
@@ -104,72 +109,6 @@ final class TouchStreamScrollPoster {
     /// Cleanly closes an open synthetic gesture series (e.g. on teardown when
     /// the engine was interrupted).
     func closeGestureSeriesIfNeeded(flags: CGEventFlags = []) {
-        guard gestureScrollSeriesActive else {
-            return
-        }
-
-        GestureEvent(
-            scrollSource: nil,
-            phase: .cancelled,
-            deltaX: 0,
-            deltaY: 0,
-            flags: flags
-        )?.send(to: eventSink)
-        GestureEvent(
-            scrollSeriesSource: nil,
-            started: false,
-            flags: flags
-        )?.send(to: eventSink)
-        gestureScrollSeriesActive = false
-    }
-
-    private func postGestureScrollCompanionsIfNeeded(
-        scrollPhase: CGScrollPhase?,
-        deltaY: Double,
-        flags: CGEventFlags
-    ) {
-        guard let scrollPhase, let gesturePhase = Self.gesturePhase(for: scrollPhase) else {
-            return
-        }
-
-        if scrollPhase == .began, !gestureScrollSeriesActive {
-            GestureEvent(
-                scrollSource: nil,
-                phase: .mayBegin,
-                deltaX: 0,
-                deltaY: 0,
-                flags: flags
-            )?.send(to: eventSink)
-            GestureEvent(
-                scrollSeriesSource: nil,
-                started: true,
-                flags: flags
-            )?.send(to: eventSink)
-            gestureScrollSeriesActive = true
-        }
-
-        GestureEvent(
-            scrollSource: nil,
-            phase: gesturePhase,
-            deltaX: 0,
-            deltaY: deltaY,
-            flags: flags
-        )?.send(to: eventSink)
-
-        if scrollPhase == .ended || scrollPhase == .cancelled {
-            GestureEvent(
-                scrollSeriesSource: nil,
-                started: false,
-                flags: flags
-            )?.send(to: eventSink)
-            gestureScrollSeriesActive = false
-        }
-    }
-
-    private static func gesturePhase(for scrollPhase: CGScrollPhase) -> CGSGesturePhase? {
-        guard let rawValue = UInt8(exactly: scrollPhase.rawValue) else {
-            return nil
-        }
-        return CGSGesturePhase(rawValue: rawValue)
+        gestureSeriesPoster.endSeriesIfNeeded(flags: flags)
     }
 }

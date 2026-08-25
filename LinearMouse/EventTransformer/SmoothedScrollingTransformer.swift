@@ -2,7 +2,6 @@
 // Copyright (c) 2021-2026 LinearMouse
 
 import Foundation
-import GestureKit
 import os.log
 
 final class SmoothedScrollingTransformer: EventTransformer, Deactivatable {
@@ -19,7 +18,7 @@ final class SmoothedScrollingTransformer: EventTransformer, Deactivatable {
     private var engine: SmoothedScrollingEngine
     private var timer: EventThreadTimer?
     private var lastFlags: CGEventFlags = []
-    private var syntheticGestureScrollSeriesActive = false
+    private let gestureSeriesPoster: GestureScrollSeriesPoster
     private var syntheticMomentumScrollActive = false
 
     init(
@@ -34,6 +33,7 @@ final class SmoothedScrollingTransformer: EventTransformer, Deactivatable {
         self.highResolutionWheelMultiplier = highResolutionWheelMultiplier
         self.now = now
         self.eventSink = eventSink
+        gestureSeriesPoster = GestureScrollSeriesPoster(eventSink: eventSink)
         engine = SmoothedScrollingEngine(smoothed: smoothed)
     }
 
@@ -105,7 +105,7 @@ final class SmoothedScrollingTransformer: EventTransformer, Deactivatable {
     }
 
     func deactivate() {
-        endSyntheticGestureScrollSeriesIfNeeded(phase: .cancelled)
+        gestureSeriesPoster.endSeriesIfNeeded(flags: lastFlags)
         stopTimer()
         engine = SmoothedScrollingEngine(smoothed: smoothed)
         delivery.resetPointDeltaRemainders()
@@ -300,10 +300,11 @@ final class SmoothedScrollingTransformer: EventTransformer, Deactivatable {
         event.flags = lastFlags
         let postedDeltaX = view.deltaXFixedPt
         let postedDeltaY = view.deltaYFixedPt
-        postGestureScrollCompanionsIfNeeded(
+        gestureSeriesPoster.postCompanionsIfNeeded(
             scrollPhase: phases.scrollPhase,
             deltaX: postedDeltaX,
-            deltaY: postedDeltaY
+            deltaY: postedDeltaY,
+            flags: lastFlags
         )
         eventSink(event)
         updateSyntheticMomentumState(afterPosting: phase)
@@ -330,9 +331,9 @@ final class SmoothedScrollingTransformer: EventTransformer, Deactivatable {
             guard hasDelta else {
                 return nil
             }
-            return syntheticGestureScrollSeriesActive ? .touchChanged : .touchBegan
+            return gestureSeriesPoster.seriesActive ? .touchChanged : .touchBegan
         case .touchEnded:
-            return syntheticGestureScrollSeriesActive ? .touchEnded : nil
+            return gestureSeriesPoster.seriesActive ? .touchEnded : nil
         case .momentumBegan:
             return hasDelta ? .momentumBegan : nil
         case .momentumChanged:
@@ -356,69 +357,6 @@ final class SmoothedScrollingTransformer: EventTransformer, Deactivatable {
         }
     }
 
-    private func postGestureScrollCompanionsIfNeeded(
-        scrollPhase: CGScrollPhase?,
-        deltaX: Double,
-        deltaY: Double
-    ) {
-        guard let scrollPhase, let gesturePhase = CGSGesturePhase(scrollPhase: scrollPhase) else {
-            return
-        }
-
-        if scrollPhase == .began, !syntheticGestureScrollSeriesActive {
-            GestureEvent(
-                scrollSource: nil,
-                phase: .mayBegin,
-                deltaX: 0,
-                deltaY: 0,
-                flags: lastFlags
-            )?.send(to: eventSink)
-            GestureEvent(
-                scrollSeriesSource: nil,
-                started: true,
-                flags: lastFlags
-            )?.send(to: eventSink)
-            syntheticGestureScrollSeriesActive = true
-        }
-
-        GestureEvent(
-            scrollSource: nil,
-            phase: gesturePhase,
-            deltaX: deltaX,
-            deltaY: deltaY,
-            flags: lastFlags
-        )?.send(to: eventSink)
-
-        if scrollPhase == .ended || scrollPhase == .cancelled {
-            GestureEvent(
-                scrollSeriesSource: nil,
-                started: false,
-                flags: lastFlags
-            )?.send(to: eventSink)
-            syntheticGestureScrollSeriesActive = false
-        }
-    }
-
-    private func endSyntheticGestureScrollSeriesIfNeeded(phase: CGSGesturePhase) {
-        guard syntheticGestureScrollSeriesActive else {
-            return
-        }
-
-        GestureEvent(
-            scrollSource: nil,
-            phase: phase,
-            deltaX: 0,
-            deltaY: 0,
-            flags: lastFlags
-        )?.send(to: eventSink)
-        GestureEvent(
-            scrollSeriesSource: nil,
-            started: false,
-            flags: lastFlags
-        )?.send(to: eventSink)
-        syntheticGestureScrollSeriesActive = false
-    }
-
     private func allowsBouncingForConfiguredAxes(
         interceptsX: Bool = true,
         interceptsY: Bool = true
@@ -430,15 +368,6 @@ final class SmoothedScrollingTransformer: EventTransformer, Deactivatable {
             return false
         }
         return true
-    }
-}
-
-private extension CGSGesturePhase {
-    init?(scrollPhase: CGScrollPhase) {
-        guard let rawValue = UInt8(exactly: scrollPhase.rawValue) else {
-            return nil
-        }
-        self.init(rawValue: rawValue)
     }
 }
 
