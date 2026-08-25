@@ -14,6 +14,7 @@ class ScrollingSettingsState: ObservableObject {
     private let deviceState = DeviceState.shared
     private var subscriptions = Set<AnyCancellable>()
     private var smoothedCache = Scheme.Scrolling.Bidirectional<Scheme.Scrolling.Smoothed>()
+    private var touchStreamCache: Scheme.Scrolling.TouchStream?
 
     @Published private(set) var highResolutionWheelInfo: Device.HighResolutionWheelInfo?
     @Published private(set) var highResolutionWheelInfoRefreshing = false
@@ -35,6 +36,15 @@ class ScrollingSettingsState: ObservableObject {
             .sink { [weak self] _ in
                 self?.resetHighResolutionWheelInfo()
                 self?.refreshHighResolutionWheelInfo()
+            }
+            .store(in: &subscriptions)
+
+        // "Raw Touch" mode availability follows stream device presence.
+        TouchStreamManager.shared.$streamingDeviceIDs
+            .receive(on: RunLoop.main)
+            .removeDuplicates()
+            .sink { [weak self] _ in
+                self?.objectWillChange.send()
             }
             .store(in: &subscriptions)
     }
@@ -133,6 +143,7 @@ extension ScrollingSettingsState {
 
         case accelerated = "Accelerated"
         case smoothed = "Smoothed"
+        case rawTouch = "Raw Touch"
         case byLines = "By Lines"
         case byPixels = "By Pixels"
 
@@ -140,6 +151,7 @@ extension ScrollingSettingsState {
             switch self {
             case .accelerated: "Accelerated"
             case .smoothed: "Smoothed (Beta)"
+            case .rawTouch: "Raw Touch"
             case .byLines: "By Lines"
             case .byPixels: "By Pixels"
             }
@@ -149,14 +161,41 @@ extension ScrollingSettingsState {
             switch self {
             case .smoothed, .byPixels:
                 true
-            case .accelerated, .byLines:
+            case .accelerated, .rawTouch, .byLines:
                 false
             }
         }
     }
 
+    /// Whether the currently selected device is a detected streaming device
+    /// (its touch-stream vendor collection is connected and passed capability
+    /// detection).
+    var isTouchStreamAvailable: Bool {
+        guard let currentDevice else {
+            return false
+        }
+
+        return TouchStreamManager.shared.isStreamingDevice(currentDevice)
+    }
+
+    /// The modes offered by the mode picker: "Raw Touch" only appears for
+    /// detected streaming devices (or when it is already the selected mode,
+    /// so a temporarily disconnected keyboard does not break the picker).
+    var availableScrollingModes: [ScrollingMode] {
+        ScrollingMode.allCases.filter { mode in
+            guard mode == .rawTouch else {
+                return true
+            }
+            return isTouchStreamAvailable || scrollingMode == .rawTouch
+        }
+    }
+
     var scrollingMode: ScrollingMode {
         get {
+            if currentTouchStreamConfiguration != nil {
+                return .rawTouch
+            }
+
             if currentSmoothedConfiguration != nil {
                 return .smoothed
             }
@@ -171,6 +210,10 @@ extension ScrollingSettingsState {
             }
         }
         set {
+            if newValue != .rawTouch {
+                clearTouchStreamConfiguration()
+            }
+
             switch newValue {
             case .accelerated:
                 clearSmoothedConfiguration()
@@ -180,6 +223,15 @@ extension ScrollingSettingsState {
             case .smoothed:
                 let smoothed = currentSmoothedConfiguration ?? makeDefaultSmoothedConfiguration()
                 setSmoothedConfiguration(smoothed)
+                scheme.scrolling.distance[direction] = .auto
+                scheme.scrolling.acceleration[direction] = 1
+                scheme.scrolling.speed[direction] = 0
+            case .rawTouch:
+                clearSmoothedConfiguration()
+                let touchStream = currentTouchStreamConfiguration
+                    ?? touchStreamCache
+                    ?? Scheme.Scrolling.TouchStream()
+                setTouchStreamConfiguration(touchStream)
                 scheme.scrolling.distance[direction] = .auto
                 scheme.scrolling.acceleration[direction] = 1
                 scheme.scrolling.speed[direction] = 0
@@ -313,6 +365,8 @@ extension ScrollingSettingsState {
             return scrollingAcceleration == 0 && scrollingSpeed == 0
         case .smoothed:
             return smoothedResponse == 0 && smoothedSpeed == 0 && smoothedAcceleration == 0 && smoothedInertia == 0
+        case .rawTouch:
+            return false
         case .byLines:
             return scrollingDistanceInLines == 0
         case .byPixels:
@@ -427,5 +481,223 @@ extension ScrollingSettingsState {
         formatter.maximumFractionDigits = maxFractionDigits
         formatter.thousandSeparator = ""
         return formatter
+    }
+}
+
+// MARK: - Raw touch (touch-stream) scrolling
+
+extension ScrollingSettingsState {
+    /// The active touch-stream configuration, mirroring
+    /// `currentSmoothedConfiguration`: the device scheme's own value first,
+    /// then the merged scheme, then the mode-switch cache. `nil` while the
+    /// feature is disabled. Touch-stream settings are direction-agnostic, so
+    /// unlike the smoothed configuration there is no per-direction subscript
+    /// — both direction tabs edit the same values.
+    private var currentTouchStreamConfiguration: Scheme.Scrolling.TouchStream? {
+        let configuration = scheme.scrolling.$touchStream
+            ?? mergedScheme.scrolling.$touchStream
+            ?? touchStreamCache
+        guard configuration?.isEnabled == true else {
+            return nil
+        }
+        return configuration
+    }
+
+    private func setTouchStreamConfiguration(_ configuration: Scheme.Scrolling.TouchStream) {
+        var configuration = configuration
+        configuration.enabled = true
+        scheme.scrolling.touchStream = configuration
+        touchStreamCache = configuration
+    }
+
+    /// Disables touch-stream scrolling, caching the tuning so switching modes
+    /// back and forth does not lose it (the smoothedCache pattern). Writes an
+    /// explicit `enabled: false` only when some scheme actually configured
+    /// the feature, so unrelated devices' schemes stay clean.
+    func clearTouchStreamConfiguration() {
+        if let currentTouchStreamConfiguration {
+            touchStreamCache = currentTouchStreamConfiguration
+        }
+
+        guard scheme.scrolling.$touchStream != nil
+            || mergedScheme.scrolling.$touchStream != nil else {
+            return
+        }
+
+        scheme.scrolling.touchStream = .init(enabled: false)
+    }
+
+    private func makeEditableTouchStreamConfiguration() -> Scheme.Scrolling.TouchStream {
+        var configuration = currentTouchStreamConfiguration
+            ?? scheme.scrolling.$touchStream
+            ?? touchStreamCache
+            ?? Scheme.Scrolling.TouchStream()
+        configuration.enabled = true
+        return configuration
+    }
+
+    private func updateTouchStreamConfiguration(_ update: (inout Scheme.Scrolling.TouchStream) -> Void) {
+        var configuration = makeEditableTouchStreamConfiguration()
+        update(&configuration)
+        setTouchStreamConfiguration(configuration)
+    }
+
+    var touchStreamScale: Double {
+        get {
+            currentTouchStreamConfiguration?.scale?.asTruncatedDouble
+                ?? Scheme.Scrolling.TouchStream.defaultScale
+        }
+        set {
+            updateTouchStreamConfiguration {
+                $0.scale = Decimal(newValue).rounded(3)
+            }
+        }
+    }
+
+    var touchStreamScaleFormatter: NumberFormatter {
+        decimalFormatter(maxFractionDigits: 3)
+    }
+
+    var touchStreamInverted: Bool {
+        get { currentTouchStreamConfiguration?.resolvedDirection == .inverted }
+        set {
+            updateTouchStreamConfiguration {
+                $0.direction = newValue ? .inverted : .natural
+            }
+        }
+    }
+
+    var touchStreamAccelerationEnabled: Bool {
+        get { currentTouchStreamConfiguration?.acceleration?.isEnabled ?? false }
+        set {
+            updateTouchStreamAcceleration {
+                $0.enabled = newValue
+            }
+        }
+    }
+
+    private func updateTouchStreamAcceleration(
+        _ update: (inout Scheme.Scrolling.TouchStream.Acceleration) -> Void
+    ) {
+        updateTouchStreamConfiguration {
+            var acceleration = $0.acceleration ?? .init()
+            update(&acceleration)
+            $0.acceleration = acceleration
+        }
+    }
+
+    var touchStreamAccelerationExponent: Double {
+        get {
+            (currentTouchStreamConfiguration?.acceleration ?? .init()).resolvedExponent
+        }
+        set {
+            updateTouchStreamAcceleration {
+                $0.exponent = Decimal(newValue).rounded(2)
+            }
+        }
+    }
+
+    var touchStreamAccelerationExponentFormatter: NumberFormatter {
+        decimalFormatter(maxFractionDigits: 2)
+    }
+
+    var touchStreamAccelerationReferenceSpeed: Double {
+        get {
+            (currentTouchStreamConfiguration?.acceleration ?? .init()).resolvedReferenceSpeed
+        }
+        set {
+            updateTouchStreamAcceleration {
+                $0.referenceSpeed = Decimal(newValue).rounded(0)
+            }
+        }
+    }
+
+    var touchStreamAccelerationReferenceSpeedFormatter: NumberFormatter {
+        decimalFormatter(maxFractionDigits: 0)
+    }
+
+    var touchStreamAccelerationMinGain: Double {
+        get {
+            (currentTouchStreamConfiguration?.acceleration ?? .init()).resolvedMinGain
+        }
+        set {
+            updateTouchStreamAcceleration {
+                $0.minGain = Decimal(newValue).rounded(2)
+            }
+        }
+    }
+
+    var touchStreamAccelerationMinGainFormatter: NumberFormatter {
+        decimalFormatter(maxFractionDigits: 2)
+    }
+
+    var touchStreamAccelerationMaxGain: Double {
+        get {
+            (currentTouchStreamConfiguration?.acceleration ?? .init()).resolvedMaxGain
+        }
+        set {
+            updateTouchStreamAcceleration {
+                $0.maxGain = Decimal(newValue).rounded(2)
+            }
+        }
+    }
+
+    var touchStreamAccelerationMaxGainFormatter: NumberFormatter {
+        decimalFormatter(maxFractionDigits: 2)
+    }
+
+    private func updateTouchStreamMomentum(
+        _ update: (inout Scheme.Scrolling.TouchStream.Momentum) -> Void
+    ) {
+        updateTouchStreamConfiguration {
+            var momentum = $0.momentum ?? .init()
+            update(&momentum)
+            $0.momentum = momentum
+        }
+    }
+
+    var touchStreamMomentumDecayTimeConstant: Double {
+        get {
+            (currentTouchStreamConfiguration?.momentum ?? .init()).resolvedDecayTimeConstant
+        }
+        set {
+            updateTouchStreamMomentum {
+                $0.decayTimeConstant = Decimal(newValue).rounded(2)
+            }
+        }
+    }
+
+    var touchStreamMomentumDecayTimeConstantFormatter: NumberFormatter {
+        decimalFormatter(maxFractionDigits: 2)
+    }
+
+    var touchStreamMomentumStartThreshold: Double {
+        get {
+            (currentTouchStreamConfiguration?.momentum ?? .init()).resolvedStartThreshold
+        }
+        set {
+            updateTouchStreamMomentum {
+                $0.startThreshold = Decimal(newValue).rounded(0)
+            }
+        }
+    }
+
+    var touchStreamMomentumStartThresholdFormatter: NumberFormatter {
+        decimalFormatter(maxFractionDigits: 0)
+    }
+
+    var touchStreamMomentumMaxSpeed: Double {
+        get {
+            (currentTouchStreamConfiguration?.momentum ?? .init()).resolvedMaxSpeed
+        }
+        set {
+            updateTouchStreamMomentum {
+                $0.maxSpeed = Decimal(newValue).rounded(0)
+            }
+        }
+    }
+
+    var touchStreamMomentumMaxSpeedFormatter: NumberFormatter {
+        decimalFormatter(maxFractionDigits: 0)
     }
 }

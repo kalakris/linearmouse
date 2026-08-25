@@ -3172,6 +3172,146 @@
         }
       }
     },
+    "Acceleration exponent" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Acceleration exponent"
+          }
+        }
+      }
+    },
+    "Eager" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Eager"
+          }
+        }
+      }
+    },
+    "Flip the scroll direction relative to the pad's native orientation." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Flip the scroll direction relative to the pad's native orientation."
+          }
+        }
+      }
+    },
+    "Full" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Full"
+          }
+        }
+      }
+    },
+    "Invert scroll direction" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Invert scroll direction"
+          }
+        }
+      }
+    },
+    "Maximum gain" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Maximum gain"
+          }
+        }
+      }
+    },
+    "Minimum gain" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Minimum gain"
+          }
+        }
+      }
+    },
+    "Momentum decay" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Momentum decay"
+          }
+        }
+      }
+    },
+    "Momentum threshold" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Momentum threshold"
+          }
+        }
+      }
+    },
+    "Momentum top speed" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Momentum top speed"
+          }
+        }
+      }
+    },
+    "Raw Touch" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Raw Touch"
+          }
+        }
+      }
+    },
+    "Reference speed" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reference speed"
+          }
+        }
+      }
+    },
+    "Reluctant" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reluctant"
+          }
+        }
+      }
+    },
+    "Slow drags scroll precisely; fast flicks travel further." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Slow drags scroll precisely; fast flicks travel further."
+          }
+        }
+      }
+    },
     "⇧ (Shift)" : {
       "localizations" : {
         "af" : {
