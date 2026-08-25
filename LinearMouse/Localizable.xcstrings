@@ -6924,6 +6924,16 @@
         }
       }
     },
+    "Amplified" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Amplified"
+          }
+        }
+      }
+    },
     "and" : {
       "comment" : "Button list conjunction",
       "localizations" : {
@@ -33586,6 +33596,16 @@
         }
       }
     },
+    "Input scale" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Input scale"
+          }
+        }
+      }
+    },
     "Installed" : {
       "localizations" : {
         "af" : {
@@ -50668,6 +50688,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "正在錄製"
+          }
+        }
+      }
+    },
+    "Reduced" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reduced"
           }
         }
       }

@@ -279,6 +279,14 @@ declare namespace Scheme {
       inertia?: number;
 
       /**
+       * @description Scales raw input deltas before the smoothing curve is applied. Use values below 1 to tame high-resolution devices that report large per-event deltas.
+       * @minimum 0.001
+       * @maximum 10
+       * @default 1
+       */
+      inputScale?: number;
+
+      /**
        * @description Set to `false` to avoid rubber-band overscroll when smoothed scrolling emits synthetic continuous scroll events.
        * @default true
        */

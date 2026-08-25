@@ -90,6 +90,11 @@ Set `bouncing` to `false` to avoid rubber-band overscroll when smoothed scrollin
 continuous scroll events. This keeps the smoothed momentum tail, but sends it without scroll
 phase/momentum phase markers so apps are less likely to treat it like a trackpad gesture.
 
+Set `inputScale` (0.001–10, default 1) to scale raw input deltas before the smoothing curve is
+applied. The curves are tuned for wheels that report about ±1 per detent; high-resolution devices
+that report large per-event deltas can overwhelm them, so values well below 1 (for example
+0.05–0.2) bring such input back into the expected range.
+
 For example, to use a smoother scrolling profile for a mouse:
 
 ```json
