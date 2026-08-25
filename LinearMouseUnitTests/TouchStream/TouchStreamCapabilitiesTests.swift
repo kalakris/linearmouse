@@ -69,6 +69,11 @@ final class TouchStreamCapabilitiesTests: XCTestCase {
         report[0] = 0x00
         XCTAssertNil(TouchStreamCapabilities.parse(reportBytes: report))
 
+        // No v1 feature report ever existed: the feature report itself is
+        // the v2 addition.
+        report[0] = 0x01
+        XCTAssertNil(TouchStreamCapabilities.parse(reportBytes: report))
+
         report[0] = 0x03
         XCTAssertNil(TouchStreamCapabilities.parse(reportBytes: report))
 

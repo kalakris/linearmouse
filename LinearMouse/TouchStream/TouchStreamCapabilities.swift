@@ -30,9 +30,10 @@ struct TouchStreamCapabilities: Equatable {
     static let featureReportID: CFIndex = 0x04
     static let payloadLength = 8
 
-    /// Protocol versions this build knows how to consume. Anything newer is
-    /// treated as non-streaming rather than guessed at.
-    static let supportedVersions: ClosedRange<Int> = 1 ... 2
+    /// The protocol version this build knows how to consume. The feature
+    /// report itself is the v2 addition — no v1 report ever existed — and
+    /// anything newer is treated as non-streaming rather than guessed at.
+    static let supportedVersion = 2
 
     var version: Int
     var padsPresent: UInt8
@@ -80,7 +81,7 @@ struct TouchStreamCapabilities: Equatable {
     }
 
     var isSupported: Bool {
-        Self.supportedVersions.contains(version)
+        version == Self.supportedVersion
     }
 
     /// Parses a feature-report buffer into supported capabilities, tolerating
