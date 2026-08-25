@@ -1933,6 +1933,11 @@
     "TouchStream": {
       "additionalProperties": false,
       "properties": {
+        "acceleration": {
+          "$ref": "#/definitions/TouchStream.Acceleration",
+          "description": "Velocity-dependent scroll gain (\"ballistics\"), mimicking Apple trackpad feel: slow drags scroll with sub-linear precision, fast flicks travel super-linearly. Each frame's delta is multiplied by clamp((smoothedSpeed / referenceSpeed) ^ exponent, minGain, maxGain), where smoothedSpeed is the lightly smoothed finger speed in raw Cirque counts per second. Momentum after a flick is seeded from the boosted output velocity.",
+          "title": "Acceleration"
+        },
         "axis": {
           "default": "y",
           "description": "The raw Cirque coordinate that feeds the scroll position and velocity math. Pads mounted rotated (e.g. the Go60, whose firmware streams raw coordinates without applying its rotate-90 pointer transform) report physical up/down motion on the raw X axis; select \"x\" for those.",
@@ -1963,6 +1968,45 @@
           "$ref": "#/definitions/TouchStream.TapToClick",
           "description": "Host-side tap-to-click: a short, nearly stationary pointer-context touch posts a synthetic left click at the cursor. Restores the Cirque hardware tap-to-click lost when the pad switched to absolute mode. Consecutive taps chain into double- and triple-clicks.",
           "title": "Tap to click"
+        }
+      },
+      "type": "object"
+    },
+    "TouchStream.Acceleration": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": false,
+          "description": "Whether the velocity-dependent gain is active. Unlike the parent touchStream.enabled, this defaults to false even when the acceleration object is present; when off, scrolling is exactly linear.",
+          "type": "boolean"
+        },
+        "exponent": {
+          "default": 0.5,
+          "description": "Exponent of the gain curve. 0 makes the curve the identity (plain linear scrolling); 0.5 doubles the gain for every 4x increase in finger speed.",
+          "maximum": 2,
+          "minimum": 0,
+          "type": "number"
+        },
+        "maxGain": {
+          "default": 3,
+          "description": "Upper clamp on the gain, applied to fast flicks.",
+          "maximum": 20,
+          "minimum": 1,
+          "type": "number"
+        },
+        "minGain": {
+          "default": 0.4,
+          "description": "Lower clamp on the gain, applied to slow precise motion.",
+          "maximum": 1,
+          "minimum": 0.05,
+          "type": "number"
+        },
+        "referenceSpeed": {
+          "default": 800,
+          "description": "Finger speed, in raw Cirque counts per second, at which the gain is exactly 1. The pad reports ~38 counts/mm, so the default 800 counts/s is about 2 cm/s of finger motion.",
+          "maximum": 20000,
+          "minimum": 50,
+          "type": "number"
         }
       },
       "type": "object"

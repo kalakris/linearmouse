@@ -101,10 +101,18 @@ final class TouchStreamManager {
             return
         }
 
+        let acceleration = touchStream.acceleration ?? .init()
         let config = TouchScrollEngine.Config(
             pointsPerCount: touchStream.resolvedScale,
             invert: touchStream.isInverted,
-            axis: touchStream.resolvedAxis
+            axis: touchStream.resolvedAxis,
+            acceleration: .init(
+                enabled: acceleration.isEnabled,
+                exponent: acceleration.resolvedExponent,
+                referenceSpeed: acceleration.resolvedReferenceSpeed,
+                minGain: acceleration.resolvedMinGain,
+                maxGain: acceleration.resolvedMaxGain
+            )
         )
         let tapToClick = touchStream.tapToClick ?? .init()
         let tapConfig = TouchTapRecognizer.Config(

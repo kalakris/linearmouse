@@ -11,9 +11,15 @@ final class TouchScrollEngineTests: XCTestCase {
     private func makeEngine(
         pointsPerCount: Double = 0.25,
         invert: Bool = false,
-        axis: Configuration.TouchStream.Axis = .y
+        axis: Configuration.TouchStream.Axis = .y,
+        acceleration: TouchScrollEngine.Config.Acceleration = .init()
     ) -> TouchScrollEngine {
-        TouchScrollEngine(config: .init(pointsPerCount: pointsPerCount, invert: invert, axis: axis))
+        TouchScrollEngine(config: .init(
+            pointsPerCount: pointsPerCount,
+            invert: invert,
+            axis: axis,
+            acceleration: acceleration
+        ))
     }
 
     private func scrollFrame(y: Int, at timestamp: TimeInterval, pad: UInt8 = 0) -> TouchStreamFrame {
@@ -225,6 +231,130 @@ final class TouchScrollEngineTests: XCTestCase {
         _ = engine.handle(frame: scrollFrame(y: 500, at: 0))
         let events = engine.handle(frame: scrollFrame(y: 530, at: Self.frameInterval))
         XCTAssertEqual(events, [.touchChanged(deltaY: 30)])
+    }
+
+    // MARK: - Acceleration (velocity-dependent gain)
+
+    /// Steady drag at `countsPerFrame` per ~100 Hz frame; returns the emitted
+    /// touchChanged deltas.
+    private func steadyDragDeltas(
+        acceleration: TouchScrollEngine.Config.Acceleration,
+        countsPerFrame: Int,
+        frames: Int = 10
+    ) -> [Double] {
+        let engine = makeEngine(acceleration: acceleration)
+        var deltas: [Double] = []
+        var y = 200
+
+        for step in 0 ..< frames {
+            let events = engine.handle(frame: scrollFrame(y: y, at: Double(step) * Self.frameInterval))
+            for case let .touchChanged(deltaY) in events {
+                deltas.append(deltaY)
+            }
+            y += countsPerFrame
+        }
+
+        return deltas
+    }
+
+    /// Expected steady-state gain for a constant-speed drag with the default
+    /// curve: clamp(sqrt(speed / 800), 0.4, 3).
+    private func defaultCurveGain(countsPerFrame: Int) -> Double {
+        let speed = Double(countsPerFrame) / Self.frameInterval
+        return pow(speed / 800.0, 0.5).clamped(to: 0.4 ... 3.0)
+    }
+
+    func testAccelerationExponentZeroMatchesDisabledAndLinear() {
+        let linear = makeEngine()
+        let disabled = makeEngine(acceleration: .init(enabled: false, exponent: 0.7))
+        let exponentZero = makeEngine(acceleration: .init(enabled: true, exponent: 0))
+
+        let (linearEvents, linearLift) = performFlick(on: linear)
+        let (disabledEvents, disabledLift) = performFlick(on: disabled)
+        let (exponentZeroEvents, exponentZeroLift) = performFlick(on: exponentZero)
+
+        XCTAssertEqual(disabledEvents, linearEvents)
+        XCTAssertEqual(exponentZeroEvents, linearEvents)
+
+        // The momentum seed and decay must match too.
+        let linearMomentum = drainMomentum(on: linear, from: linearLift)
+        XCTAssertFalse(linearMomentum.isEmpty)
+        XCTAssertEqual(drainMomentum(on: disabled, from: disabledLift), linearMomentum)
+        XCTAssertEqual(drainMomentum(on: exponentZero, from: exponentZeroLift), linearMomentum)
+    }
+
+    func testAccelerationAttenuatesSlowDragsAndBoostsFastDrags() {
+        // Slow drag: 3 counts/frame = 300 counts/s, below the 800 counts/s
+        // reference speed, so gain < 1.
+        let slowLinear = steadyDragDeltas(acceleration: .init(), countsPerFrame: 3)
+        let slowAccelerated = steadyDragDeltas(acceleration: .init(enabled: true), countsPerFrame: 3)
+        XCTAssertEqual(slowAccelerated.count, slowLinear.count)
+        for (accelerated, linear) in zip(slowAccelerated, slowLinear) {
+            XCTAssertLessThan(accelerated, linear)
+            XCTAssertGreaterThan(accelerated, 0)
+        }
+
+        // Fast drag: 25 counts/frame = 2500 counts/s, above reference, gain > 1.
+        let fastLinear = steadyDragDeltas(acceleration: .init(), countsPerFrame: 25)
+        let fastAccelerated = steadyDragDeltas(acceleration: .init(enabled: true), countsPerFrame: 25)
+        for (accelerated, linear) in zip(fastAccelerated, fastLinear) {
+            XCTAssertGreaterThan(accelerated, linear)
+        }
+    }
+
+    func testAccelerationHasNoSlowStartDeadZone() {
+        // A steady drag exactly at the reference speed (8 counts/frame =
+        // 800 counts/s) must have gain 1 from the very first movement frame:
+        // the speed smoother seeds from the first observed instantaneous
+        // speed rather than ramping up from zero.
+        let deltas = steadyDragDeltas(acceleration: .init(enabled: true), countsPerFrame: 8)
+        XCTAssertEqual(deltas.count, 9)
+        for delta in deltas {
+            XCTAssertEqual(delta, 8 * 0.25, accuracy: 1e-9)
+        }
+    }
+
+    func testAccelerationGainClampsAtMinAndMax() {
+        // 1 count/frame = 100 counts/s: raw gain sqrt(100/800) ≈ 0.354,
+        // clamped up to minGain 0.4.
+        let crawlDeltas = steadyDragDeltas(acceleration: .init(enabled: true), countsPerFrame: 1)
+        XCTAssertEqual(defaultCurveGain(countsPerFrame: 1), 0.4)
+        for delta in crawlDeltas {
+            XCTAssertEqual(delta, 1 * 0.25 * 0.4, accuracy: 1e-9)
+        }
+
+        // 100 counts/frame = 10000 counts/s: raw gain sqrt(12.5) ≈ 3.54,
+        // clamped down to maxGain 3.
+        let sprintDeltas = steadyDragDeltas(acceleration: .init(enabled: true), countsPerFrame: 100)
+        XCTAssertEqual(defaultCurveGain(countsPerFrame: 100), 3.0)
+        for delta in sprintDeltas {
+            XCTAssertEqual(delta, 100 * 0.25 * 3.0, accuracy: 1e-9)
+        }
+    }
+
+    func testAccelerationMomentumSeedReflectsBoostedVelocity() {
+        let linear = makeEngine()
+        let accelerated = makeEngine(acceleration: .init(enabled: true))
+
+        let (_, linearLift) = performFlick(on: linear)
+        let (_, acceleratedLift) = performFlick(on: accelerated)
+        XCTAssertTrue(linear.wantsMomentumTicks)
+        XCTAssertTrue(accelerated.wantsMomentumTicks)
+
+        guard
+            case let .momentumBegan(linearSeed)? = drainMomentum(on: linear, from: linearLift).first,
+            case let .momentumBegan(acceleratedSeed)? = drainMomentum(on: accelerated, from: acceleratedLift).first
+        else {
+            XCTFail("Expected both engines to begin momentum")
+            return
+        }
+
+        // The steady 2500 counts/s flick has constant gain sqrt(2500/800),
+        // so the output-side (on-screen) lift-off velocity — and therefore
+        // the momentum seed — is boosted by exactly that factor.
+        let expectedGain = defaultCurveGain(countsPerFrame: 25)
+        XCTAssertGreaterThan(expectedGain, 1)
+        XCTAssertEqual(acceleratedSeed, linearSeed * expectedGain, accuracy: 1e-6)
     }
 
     // MARK: - Frames that must be ignored

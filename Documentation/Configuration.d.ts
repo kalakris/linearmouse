@@ -87,6 +87,12 @@ type TouchStream = {
   axis?: "x" | "y";
 
   /**
+   * @title Acceleration
+   * @description Velocity-dependent scroll gain ("ballistics"), mimicking Apple trackpad feel: slow drags scroll with sub-linear precision, fast flicks travel super-linearly. Each frame's delta is multiplied by clamp((smoothedSpeed / referenceSpeed) ^ exponent, minGain, maxGain), where smoothedSpeed is the lightly smoothed finger speed in raw Cirque counts per second. Momentum after a flick is seeded from the boosted output velocity.
+   */
+  acceleration?: TouchStream.Acceleration;
+
+  /**
    * @title Tap to click
    * @description Host-side tap-to-click: a short, nearly stationary pointer-context touch posts a synthetic left click at the cursor. Restores the Cirque hardware tap-to-click lost when the pad switched to absolute mode. Consecutive taps chain into double- and triple-clicks.
    */
@@ -94,6 +100,46 @@ type TouchStream = {
 };
 
 declare namespace TouchStream {
+  type Acceleration = {
+    /**
+     * @description Whether the velocity-dependent gain is active. Unlike the parent touchStream.enabled, this defaults to false even when the acceleration object is present; when off, scrolling is exactly linear.
+     * @default false
+     */
+    enabled?: boolean;
+
+    /**
+     * @description Exponent of the gain curve. 0 makes the curve the identity (plain linear scrolling); 0.5 doubles the gain for every 4x increase in finger speed.
+     * @minimum 0
+     * @maximum 2
+     * @default 0.5
+     */
+    exponent?: number;
+
+    /**
+     * @description Finger speed, in raw Cirque counts per second, at which the gain is exactly 1. The pad reports ~38 counts/mm, so the default 800 counts/s is about 2 cm/s of finger motion.
+     * @minimum 50
+     * @maximum 20000
+     * @default 800
+     */
+    referenceSpeed?: number;
+
+    /**
+     * @description Lower clamp on the gain, applied to slow precise motion.
+     * @minimum 0.05
+     * @maximum 1
+     * @default 0.4
+     */
+    minGain?: number;
+
+    /**
+     * @description Upper clamp on the gain, applied to fast flicks.
+     * @minimum 1
+     * @maximum 20
+     * @default 3
+     */
+    maxGain?: number;
+  };
+
   type TapToClick = {
     /**
      * @description Whether tap-to-click is active. Unlike the parent touchStream.enabled, this defaults to false even when the tapToClick object is present.
