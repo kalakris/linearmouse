@@ -1933,6 +1933,15 @@
     "TouchStream": {
       "additionalProperties": false,
       "properties": {
+        "axis": {
+          "default": "y",
+          "description": "The raw Cirque coordinate that feeds the scroll position and velocity math. Pads mounted rotated (e.g. the Go60, whose firmware streams raw coordinates without applying its rotate-90 pointer transform) report physical up/down motion on the raw X axis; select \"x\" for those.",
+          "enum": [
+            "x",
+            "y"
+          ],
+          "type": "string"
+        },
         "enabled": {
           "default": true,
           "description": "Whether touch-stream scrolling is active.",
@@ -1940,7 +1949,7 @@
         },
         "invert": {
           "default": false,
-          "description": "Inverts the scroll direction. By default, a finger moving toward increasing Cirque Y produces positive (scroll-up) deltas.",
+          "description": "Inverts the scroll direction. By default, a finger moving toward an increasing raw coordinate (on the selected axis) produces positive (scroll-up) deltas.",
           "type": "boolean"
         },
         "scale": {
