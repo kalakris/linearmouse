@@ -85,7 +85,39 @@ type TouchStream = {
    * @default "y"
    */
   axis?: "x" | "y";
+
+  /**
+   * @title Tap to click
+   * @description Host-side tap-to-click: a short, nearly stationary pointer-context touch posts a synthetic left click at the cursor. Restores the Cirque hardware tap-to-click lost when the pad switched to absolute mode. Consecutive taps chain into double- and triple-clicks.
+   */
+  tapToClick?: TouchStream.TapToClick;
 };
+
+declare namespace TouchStream {
+  type TapToClick = {
+    /**
+     * @description Whether tap-to-click is active. Unlike the parent touchStream.enabled, this defaults to false even when the tapToClick object is present.
+     * @default false
+     */
+    enabled?: boolean;
+
+    /**
+     * @description Maximum touch duration in milliseconds for a touch to count as a tap.
+     * @minimum 50
+     * @maximum 1000
+     * @default 180
+     */
+    maxDurationMs?: number;
+
+    /**
+     * @description Maximum movement for a touch to count as a tap, in raw Cirque counts (the larger of the X and Y excursions over the whole touch; the pad reports ~38 counts/mm).
+     * @minimum 1
+     * @maximum 500
+     * @default 30
+     */
+    maxMovement?: number;
+  };
+}
 
 type Scheme = {
   /**
