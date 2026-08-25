@@ -107,8 +107,6 @@ final class TouchStreamManager: ObservableObject {
     private var tapToClickEnabled = false
     private var momentumTimer: EventThreadTimer?
 
-    private let now: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
-
     init() {}
 
     // MARK: - Cross-thread queries
@@ -528,7 +526,10 @@ final class TouchStreamManager: ObservableObject {
             payload.removeFirst()
         }
 
-        guard let frame = TouchStreamFrame(reportBytes: payload, timestamp: now()) else {
+        guard let frame = TouchStreamFrame(
+            reportBytes: payload,
+            timestamp: ProcessInfo.processInfo.systemUptime
+        ) else {
             // Malformed/short report: drop silently (never crash).
             return
         }
@@ -585,7 +586,7 @@ final class TouchStreamManager: ObservableObject {
     }
 
     private func momentumTick() {
-        for event in engine.momentumTick(at: now()) {
+        for event in engine.momentumTick(at: ProcessInfo.processInfo.systemUptime) {
             poster.post(event)
         }
 
