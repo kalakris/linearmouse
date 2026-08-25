@@ -11,9 +11,13 @@ struct Configuration: Codable, Equatable {
 
     var schemes: [Scheme] = []
 
+    /// Prototype: raw touch-stream scrolling (see `Configuration.TouchStream`).
+    var touchStream: TouchStream?
+
     enum CodingKeys: String, CodingKey {
         case jsonSchema = "$schema"
         case schemes
+        case touchStream
     }
 
     enum ConfigurationError: Error {
