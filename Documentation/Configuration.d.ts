@@ -217,7 +217,7 @@ declare namespace Scheme {
 
     /**
      * @title Touch-stream scrolling
-     * @description Consumes absolute touch frames streamed over a vendor-defined HID report by a supported keyboard trackpad (MoErgo Go60) and synthesizes trackpad-style scrolling with gesture phases and momentum. Applies when the scheme matches the keyboard's pointer device (same vendor/product ID as the streaming HID collection). The scroll axis and natural direction are derived automatically from the pad orientation self-reported in the device's capability feature report; the scheme's generic `scrolling.reverse` (vertical) toggle flips it, applied exactly once at the source. Touch-stream settings are otherwise direction-agnostic (not Bidirectional). The feature is entirely off when this key is absent.
+     * @description Consumes absolute touch frames streamed over a vendor-defined HID report by a supported keyboard trackpad (MoErgo Go60) and synthesizes trackpad-style scrolling with gesture phases and momentum. Applies when the scheme matches the keyboard's pointer device (same vendor/product ID as the streaming HID collection). The scroll axis is derived automatically from the pad orientation self-reported in the device's capability feature report; the direction follows the system-wide Natural Scrolling preference (like wheel devices), and the scheme's generic `scrolling.reverse` (vertical) toggle flips that baseline, applied exactly once at the source. Touch-stream settings are otherwise direction-agnostic (not Bidirectional). The feature is entirely off when this key is absent.
      */
     touchStream?: Scrolling.TouchStream;
   };

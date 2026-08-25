@@ -28,11 +28,15 @@ import os.log
 ///   (`schemes[].scrolling.touchStream`), matched against the keyboard's
 ///   pointer device. The pointer device is identified by physical identity
 ///   (`HIDPhysicalDeviceIdentity`) rather than vendor/product ID, because
-///   multiple ZMK keyboards can share the same VID/PID. The scroll axis and
-///   default direction come from the device's self-reported orientation; the
-///   scheme's generic `scrolling.reverse` (vertical) toggle flips it, applied
-///   here as the engine's output sign (the event-tap reverse transformer
-///   skips synthetic events, so the flip happens exactly once).
+///   multiple ZMK keyboards can share the same VID/PID. The scroll axis comes
+///   from the device's self-reported orientation; the direction baseline
+///   follows the macOS Natural Scrolling preference (like wheel devices,
+///   which macOS flips upstream of the event tap), and the scheme's generic
+///   `scrolling.reverse` (vertical) toggle flips that — all applied here as
+///   the engine's output sign (the event-tap reverse transformer skips
+///   synthetic events, so no flip happens twice). The Natural Scrolling
+///   checkbox is observed via its distributed change notification, so
+///   toggling it re-derives the sign live.
 ///
 /// Data flow and threading:
 /// - The `IOHIDManager` is scheduled on `EventThread`'s run loop, so the
@@ -100,6 +104,11 @@ final class TouchStreamManager: ObservableObject {
     private let streamingDeviceIdentitiesLock = NSLock()
     private var lockedStreamingDeviceIdentities: [HIDPhysicalDeviceIdentity] = []
 
+    /// Reads the system-wide Natural Scrolling preference. Injectable so the
+    /// direction derivation stays testable without global state; the default
+    /// reads the global preference domain.
+    private let systemPrefersNaturalScrolling: () -> Bool
+
     // Event-thread state. Only ever touched from EventThread blocks.
     private let engine = TouchScrollEngine()
     private let poster = TouchStreamScrollPoster()
@@ -109,7 +118,11 @@ final class TouchStreamManager: ObservableObject {
     private var tapToClickEnabled = false
     private var momentumTimer: EventThreadTimer?
 
-    init() {}
+    init(
+        systemPrefersNaturalScrolling: @escaping () -> Bool = SystemScrollingPreference.prefersNatural
+    ) {
+        self.systemPrefersNaturalScrolling = systemPrefersNaturalScrolling
+    }
 
     // MARK: - Cross-thread queries
 
@@ -167,6 +180,19 @@ final class TouchStreamManager: ObservableObject {
         // the vendor collection; re-resolve when the device list settles.
         DeviceManager.shared.$devices
             .debounce(for: 0.1, scheduler: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.reconfigure()
+            }
+            .store(in: &subscriptions)
+
+        // The Natural Scrolling checkbox announces changes via a distributed
+        // notification; the engine sign depends on it, so re-derive live.
+        // Hop to the main queue (the same timing-safe idiom as
+        // `configurationChanges`): `reconfigure` runs on the main thread and
+        // re-reads the preference fresh, after the write has been committed.
+        DistributedNotificationCenter.default()
+            .publisher(for: SystemScrollingPreference.didChangeNotification)
+            .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.reconfigure()
             }
@@ -233,7 +259,10 @@ final class TouchStreamManager: ObservableObject {
         let momentum = touchStream.momentum ?? .init()
         let config = TouchScrollEngine.Config(
             pointsPerCount: touchStream.resolvedScale,
-            invert: capabilities.scrollInverted(reversed: scrolling.$reverse?.vertical ?? false),
+            invert: capabilities.scrollInverted(
+                systemPrefersNatural: systemPrefersNaturalScrolling(),
+                reversed: scrolling.$reverse?.vertical ?? false
+            ),
             axis: capabilities.scrollAxis,
             acceleration: .init(
                 enabled: acceleration.isEnabled,

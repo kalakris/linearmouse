@@ -130,13 +130,18 @@ HID collection shares the same vendor/product ID, so ordinary device matching an
 
 On connect, LinearMouse reads a capability feature report from the device (protocol version, pads
 present, resolution in counts/mm, pad orientation, and coordinate ranges). Devices without a
-supported feature report are treated as non-streaming and ignored. The scroll axis and natural
-scroll direction are derived automatically from the self-reported pad orientation, so the old
-manual `axis`/`invert` keys are gone — and so is the interim `touchStream.direction` key. To flip
-the direction, use the scheme's generic `scrolling.reverse` (vertical) toggle, which works in
-Raw Touch mode exactly like in every other scrolling mode. The flip is applied exactly once, at
-the source (the synthesizer's output sign); LinearMouse's reverse event transformer deliberately
-skips its own synthetic events.
+supported feature report are treated as non-streaming and ignored. The scroll axis is derived
+automatically from the self-reported pad orientation, so the old manual `axis`/`invert` keys are
+gone — and so is the interim `touchStream.direction` key. The scroll direction follows the
+system-wide Natural Scrolling preference (System Settings → Mouse/Trackpad), exactly like wheel
+devices: with Natural Scrolling on, content follows your fingers (phone-style); with it off,
+scrolling is old-school. To flip whichever baseline the system preference gives you, use the
+scheme's generic `scrolling.reverse` (vertical) toggle, which thus means the same thing in Raw
+Touch mode as in every other scrolling mode. Changing the system preference takes effect
+immediately. The flip is applied exactly once, at the source (the synthesizer's output sign):
+macOS applies the Natural Scrolling preference upstream of LinearMouse's event tap and never to
+LinearMouse's posted events, and LinearMouse's reverse event transformer deliberately skips its
+own synthetic events.
 
 While the streaming collection is connected and `touchStream` is enabled for the device's scheme,
 LinearMouse also drops that device's ordinary scroll-wheel events: the firmware emits them as a

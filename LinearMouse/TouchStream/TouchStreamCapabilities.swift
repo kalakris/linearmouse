@@ -118,31 +118,48 @@ extension TouchStreamCapabilities {
         rotate90 ? .x : .y
     }
 
-    /// The engine `invert` flag that produces the pad's natural scroll
-    /// direction (engine convention: `invert == false` means a finger moving
-    /// toward an increasing raw coordinate produces positive, scroll-up
-    /// deltas).
+    /// The device-orientation part of the engine `invert` sign (engine
+    /// convention: `invert == false` means a finger moving toward an
+    /// increasing raw coordinate produces positive, scroll-up deltas).
     ///
-    /// Derivation, anchored on the Go60 ground truth: logical Y (post-swap,
-    /// post-invert) is `iY * raw` where `iY = invertY ? -1 : +1`, and the
-    /// natural direction maps decreasing logical Y (finger moving "up") to
-    /// positive deltas, i.e. `deltaY ∝ -iY * Δraw`. Hence the engine sign is
-    /// `-iY`, which means `invert == !invertY`. For the Go60
-    /// (rotate-90 + y-invert) this yields axis = .x, invert = false —
-    /// exactly the user-validated prototype configuration
-    /// `{axis: "x", invert: false}`. Pinned by
-    /// `TouchStreamCapabilitiesTests.testGo60OrientationAnchor`.
-    var naturalScrollInverted: Bool {
+    /// This value alone yields the pad's *old-school* ("wheel-like")
+    /// direction: a finger moving up scrolls the view up, i.e. content moves
+    /// opposite the finger. Derivation, anchored on the Go60 ground truth:
+    /// logical Y (post-swap, post-invert) is `iY * raw` where
+    /// `iY = invertY ? -1 : +1`, and the old-school direction maps decreasing
+    /// logical Y (finger moving "up") to positive deltas, i.e.
+    /// `deltaY ∝ -iY * Δraw`. Hence the engine sign is `-iY`, which means
+    /// `invert == !invertY`. For the Go60 (rotate-90 + y-invert) this yields
+    /// axis = .x, invert = false — exactly the user-validated prototype
+    /// configuration `{axis: "x", invert: false}` (validated on a system with
+    /// Natural Scrolling off). Pinned by
+    /// `TouchStreamCapabilitiesTests.testGo60DirectionTruthTable`.
+    var orientationScrollInverted: Bool {
         !invertY
     }
 
-    /// The engine `invert` flag after applying the scheme's generic
-    /// `scrolling.reverse` (vertical) toggle on top of the
-    /// orientation-derived natural direction. This is the single point where
-    /// the user's reverse preference enters the touch-stream pipeline — the
-    /// event-tap `ReverseScrollingTransformer` skips LinearMouse's synthetic
-    /// events, so the flip is never applied twice.
-    func scrollInverted(reversed: Bool) -> Bool {
-        naturalScrollInverted != reversed
+    /// The engine `invert` flag after layering the macOS Natural Scrolling
+    /// preference and the scheme's generic `scrolling.reverse` (vertical)
+    /// toggle on top of the orientation-derived old-school baseline.
+    ///
+    /// For wheel devices macOS applies the system-wide Natural Scrolling
+    /// preference upstream of LinearMouse's event tap, so "Reverse scrolling"
+    /// off means "follow the system preference". The touch-stream pipeline
+    /// synthesizes events downstream of that preference, so it must apply the
+    /// same convention itself for the toggle to mean the same thing in every
+    /// mode:
+    ///
+    /// - system natural ON,  reverse OFF → content follows the fingers
+    ///   (phone-style)
+    /// - system natural OFF, reverse OFF → old-school (content moves opposite
+    ///   the fingers)
+    /// - reverse ON flips either.
+    ///
+    /// This is the single point where either preference enters the
+    /// touch-stream pipeline — the event-tap `ReverseScrollingTransformer`
+    /// skips LinearMouse's synthetic events and the system preference never
+    /// touches posted events, so no flip is ever applied twice.
+    func scrollInverted(systemPrefersNatural: Bool, reversed: Bool) -> Bool {
+        (orientationScrollInverted != systemPrefersNatural) != reversed
     }
 }

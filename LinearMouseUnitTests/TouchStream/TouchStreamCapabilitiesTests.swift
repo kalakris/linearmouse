@@ -96,30 +96,43 @@ final class TouchStreamCapabilitiesTests: XCTestCase {
 
     // MARK: - Orientation → axis/direction derivation
 
-    /// GROUND TRUTH ANCHOR: for the Go60's orientation (rotate-90 +
-    /// y-invert), the derived default configuration MUST exactly reproduce
-    /// the user-validated prototype behavior, i.e. what the old manual
-    /// configuration `{axis: "x", invert: false}` produced. If this test
-    /// fails, the scroll direction or axis has silently flipped — do not
-    /// "fix" the test; fix the derivation.
-    func testGo60OrientationAnchor() {
+    /// GROUND TRUTH TRUTH TABLE: for the Go60's orientation (rotate-90 +
+    /// y-invert), the engine sign for every combination of the system
+    /// Natural Scrolling preference and the scheme's "Reverse scrolling"
+    /// toggle. The (system natural OFF, reverse OFF) row MUST exactly
+    /// reproduce the user-validated prototype behavior — what the old manual
+    /// configuration `{axis: "x", invert: false}` produced on a system with
+    /// Natural Scrolling off (old-school: content moves opposite the
+    /// fingers). If a row fails, the scroll direction or axis has silently
+    /// flipped — do not "fix" the test; fix the derivation.
+    func testGo60DirectionTruthTable() {
         guard let capabilities = TouchStreamCapabilities.parse(reportBytes: Self.go60Report) else {
             XCTFail("Expected the Go60 feature report to parse")
             return
         }
 
         XCTAssertEqual(capabilities.scrollAxis, .x)
-        XCTAssertFalse(capabilities.naturalScrollInverted)
-        XCTAssertFalse(capabilities.scrollInverted(reversed: false))
-        XCTAssertTrue(capabilities.scrollInverted(reversed: true))
+        XCTAssertFalse(capabilities.orientationScrollInverted)
+
+        // system natural OFF, reverse OFF → old-school (the v1-validated
+        // direction).
+        XCTAssertFalse(capabilities.scrollInverted(systemPrefersNatural: false, reversed: false))
+        // system natural OFF, reverse ON → phone-style.
+        XCTAssertTrue(capabilities.scrollInverted(systemPrefersNatural: false, reversed: true))
+        // system natural ON, reverse OFF → content follows the fingers
+        // (phone-style), matching what wheel devices do under the system
+        // preference.
+        XCTAssertTrue(capabilities.scrollInverted(systemPrefersNatural: true, reversed: false))
+        // system natural ON, reverse ON → flipped back to old-school.
+        XCTAssertFalse(capabilities.scrollInverted(systemPrefersNatural: true, reversed: true))
     }
 
     /// End-to-end anchor: an engine configured from the Go60 capabilities
-    /// with `scrolling.reverse` unset must produce the exact deltas of the
-    /// validated prototype configuration `{axis: "x", invert: false,
-    /// scale: 0.25}` — a finger moving toward increasing raw X produces
-    /// positive (scroll-up) deltas scaled by pointsPerCount, and raw Y
-    /// movement is ignored.
+    /// with Natural Scrolling off and `scrolling.reverse` unset must produce
+    /// the exact deltas of the validated prototype configuration
+    /// `{axis: "x", invert: false, scale: 0.25}` — a finger moving toward
+    /// increasing raw X produces positive (scroll-up) deltas scaled by
+    /// pointsPerCount, and raw Y movement is ignored.
     func testGo60OrientationAnchorDrivesEngineLikeTheValidatedConfig() {
         guard let capabilities = TouchStreamCapabilities.parse(reportBytes: Self.go60Report) else {
             XCTFail("Expected the Go60 feature report to parse")
@@ -128,7 +141,7 @@ final class TouchStreamCapabilitiesTests: XCTestCase {
 
         let engine = TouchScrollEngine(config: .init(
             pointsPerCount: 0.25,
-            invert: capabilities.scrollInverted(reversed: false),
+            invert: capabilities.scrollInverted(systemPrefersNatural: false, reversed: false),
             axis: capabilities.scrollAxis
         ))
 
@@ -140,8 +153,8 @@ final class TouchStreamCapabilitiesTests: XCTestCase {
     }
 
     /// The generic "Reverse scrolling" toggle (`scrolling.reverse.vertical`)
-    /// is the one and only direction control: with it set, the same finger
-    /// motion produces the exactly negated deltas of the natural anchor.
+    /// flips the baseline: with it set (system preference unchanged), the
+    /// same finger motion produces the exactly negated deltas of the anchor.
     func testReverseScrollingFlipsTheAnchorBehavior() {
         guard let capabilities = TouchStreamCapabilities.parse(reportBytes: Self.go60Report) else {
             XCTFail("Expected the Go60 feature report to parse")
@@ -150,7 +163,28 @@ final class TouchStreamCapabilitiesTests: XCTestCase {
 
         let engine = TouchScrollEngine(config: .init(
             pointsPerCount: 0.25,
-            invert: capabilities.scrollInverted(reversed: true),
+            invert: capabilities.scrollInverted(systemPrefersNatural: false, reversed: true),
+            axis: capabilities.scrollAxis
+        ))
+
+        _ = engine.handle(frame: .init(x: 1000, y: 700, touched: true, scrollMode: true, timestamp: 0))
+        let events = engine.handle(frame: .init(x: 1030, y: 400, touched: true, scrollMode: true, timestamp: 0.01))
+
+        XCTAssertEqual(events, [.touchChanged(deltaY: -7.5)])
+    }
+
+    /// Enabling the system Natural Scrolling preference (reverse toggle
+    /// unchanged) produces the same flip: content follows the fingers, so
+    /// the anchor motion's deltas come out negated.
+    func testSystemNaturalScrollingFlipsTheAnchorBehavior() {
+        guard let capabilities = TouchStreamCapabilities.parse(reportBytes: Self.go60Report) else {
+            XCTFail("Expected the Go60 feature report to parse")
+            return
+        }
+
+        let engine = TouchScrollEngine(config: .init(
+            pointsPerCount: 0.25,
+            invert: capabilities.scrollInverted(systemPrefersNatural: true, reversed: false),
             axis: capabilities.scrollAxis
         ))
 
@@ -161,14 +195,15 @@ final class TouchStreamCapabilitiesTests: XCTestCase {
     }
 
     /// The general derivation: rotate-90 moves logical-vertical motion onto
-    /// the raw X axis; the natural engine sign is `-1` unless y-invert flips
-    /// it back (`invert == !invertY`), because the devicetree convention
-    /// (ZMK input transforms) swaps axes first and then inverts the
-    /// post-swap logical axes.
+    /// the raw X axis; the old-school engine sign is `-1` unless y-invert
+    /// flips it back (`invert == !invertY`), because the devicetree
+    /// convention (ZMK input transforms) swaps axes first and then inverts
+    /// the post-swap logical axes. The full engine sign layers the system
+    /// Natural Scrolling preference and the reverse toggle on top as XORs.
     func testOrientationDerivationTable() {
         func derive(rotate90: Bool, invertY: Bool) -> (axis: TouchStreamAxis, inverted: Bool) {
             let capabilities = TouchStreamCapabilities(rotate90: rotate90, invertY: invertY)
-            return (capabilities.scrollAxis, capabilities.naturalScrollInverted)
+            return (capabilities.scrollAxis, capabilities.orientationScrollInverted)
         }
 
         XCTAssertEqual(derive(rotate90: false, invertY: false).axis, .y)
@@ -180,8 +215,30 @@ final class TouchStreamCapabilitiesTests: XCTestCase {
         XCTAssertEqual(derive(rotate90: true, invertY: false).axis, .x)
         XCTAssertEqual(derive(rotate90: true, invertY: false).inverted, true)
 
-        // The Go60 case (also pinned by testGo60OrientationAnchor).
+        // The Go60 case (also pinned by testGo60DirectionTruthTable).
         XCTAssertEqual(derive(rotate90: true, invertY: true).axis, .x)
         XCTAssertEqual(derive(rotate90: true, invertY: true).inverted, false)
+
+        // The system preference and the reverse toggle each XOR onto the
+        // orientation baseline, for every orientation.
+        for rotate90 in [false, true] {
+            for invertY in [false, true] {
+                let capabilities = TouchStreamCapabilities(rotate90: rotate90, invertY: invertY)
+                let baseline = capabilities.orientationScrollInverted
+                for systemPrefersNatural in [false, true] {
+                    for reversed in [false, true] {
+                        XCTAssertEqual(
+                            capabilities.scrollInverted(
+                                systemPrefersNatural: systemPrefersNatural,
+                                reversed: reversed
+                            ),
+                            (baseline != systemPrefersNatural) != reversed,
+                            "rotate90=\(rotate90) invertY=\(invertY) "
+                                + "natural=\(systemPrefersNatural) reversed=\(reversed)"
+                        )
+                    }
+                }
+            }
+        }
     }
 }

@@ -10,9 +10,10 @@ extension ScrollingSettings {
     /// Touch-stream settings are direction-agnostic — the scroll axis comes
     /// from the pad's self-reported orientation — so the same controls appear
     /// on both the vertical and horizontal direction tabs and edit the same
-    /// values. Scroll direction is the generic "Reverse scrolling" toggle at
-    /// the top of the pane, applied at the source as the engine's output
-    /// sign.
+    /// values. Scroll direction follows the system Natural Scrolling
+    /// preference (like wheel devices); the generic "Reverse scrolling"
+    /// toggle at the top of the pane flips that baseline, applied at the
+    /// source as the engine's output sign.
     ///
     /// Only the everyday knobs are shown, matching the Smoothed pane's
     /// density; `acceleration.referenceSpeed`/`minGain`/`maxGain` and
