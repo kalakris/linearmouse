@@ -42,11 +42,46 @@ extension Configuration {
         /// The raw coordinate used for scrolling. Defaults to `y`.
         var axis: Axis?
 
-        init(enabled: Bool? = nil, scale: Decimal? = nil, invert: Bool? = nil, axis: Axis? = nil) {
+        /// Host-side tap-to-click for the pointer context. Absent = off.
+        var tapToClick: TapToClick?
+
+        /// Tap-to-click on pointer-context frames (touched, scroll mode off).
+        ///
+        /// The Cirque pads lost their hardware tap-to-click when the firmware
+        /// switched them to absolute mode; `TouchTapRecognizer` restores it
+        /// host-side by watching the same frame stream that drives scrolling.
+        struct TapToClick: Codable, Equatable {
+            /// Whether tap-to-click is active. Unlike the parent `enabled`,
+            /// this defaults to `false` even when the object is present.
+            var enabled: Bool?
+
+            /// Maximum touch duration in milliseconds for a touch to count as
+            /// a tap.
+            var maxDurationMs: Decimal?
+
+            /// Maximum movement in raw Cirque counts (max of |Δx|, |Δy| over
+            /// the whole touch) for a touch to count as a tap.
+            var maxMovement: Decimal?
+
+            init(enabled: Bool? = nil, maxDurationMs: Decimal? = nil, maxMovement: Decimal? = nil) {
+                self.enabled = enabled
+                self.maxDurationMs = maxDurationMs
+                self.maxMovement = maxMovement
+            }
+        }
+
+        init(
+            enabled: Bool? = nil,
+            scale: Decimal? = nil,
+            invert: Bool? = nil,
+            axis: Axis? = nil,
+            tapToClick: TapToClick? = nil
+        ) {
             self.enabled = enabled
             self.scale = scale
             self.invert = invert
             self.axis = axis
+            self.tapToClick = tapToClick
         }
     }
 }
@@ -69,5 +104,30 @@ extension Configuration.TouchStream {
 
     var resolvedAxis: Axis {
         axis ?? .y
+    }
+
+    var isTapToClickEnabled: Bool {
+        tapToClick?.isEnabled ?? false
+    }
+}
+
+extension Configuration.TouchStream.TapToClick {
+    static let maxDurationMsRange: ClosedRange<Double> = 50 ... 1000
+    static let defaultMaxDurationMs = 180.0
+
+    static let maxMovementRange: ClosedRange<Double> = 1 ... 500
+    static let defaultMaxMovement = 30.0
+
+    var isEnabled: Bool {
+        enabled ?? false
+    }
+
+    var resolvedMaxDuration: TimeInterval {
+        (maxDurationMs?.asTruncatedDouble ?? Self.defaultMaxDurationMs)
+            .clamped(to: Self.maxDurationMsRange) / 1000
+    }
+
+    var resolvedMaxMovement: Double {
+        (maxMovement?.asTruncatedDouble ?? Self.defaultMaxMovement).clamped(to: Self.maxMovementRange)
     }
 }
