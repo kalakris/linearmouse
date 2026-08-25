@@ -15,7 +15,10 @@ import Foundation
 /// Gesture model:
 /// - A scroll-mode touch-down begins a gesture (`.touchBegan`).
 /// - Every subsequent scroll-mode sample emits `.touchChanged` with a deltaY
-///   derived from the change in absolute Y, scaled by `Config.pointsPerCount`.
+///   derived from the change in the absolute coordinate selected by
+///   `Config.axis` (Y by default), scaled by `Config.pointsPerCount`. Rotated
+///   pad mounts (e.g. the Go60, whose firmware streams raw coordinates without
+///   its `rotate-90; y-invert;` pointer transforms) select X instead.
 /// - Lift-off emits `.touchEnded`; if the measured lift-off velocity is high
 ///   enough, the engine enters momentum and the owner's decay timer produces
 ///   `.momentumBegan`/`.momentumChanged` deltas until the velocity decays away
@@ -29,9 +32,13 @@ final class TouchScrollEngine {
         /// Screen points of scroll per Cirque touch count.
         var pointsPerCount = Configuration.TouchStream.defaultScale
 
-        /// When false (default), a finger moving toward increasing Cirque Y
-        /// produces positive CGEvent deltaY (scroll-up). Set to flip.
+        /// When false (default), a finger moving toward an increasing raw
+        /// coordinate (on the selected axis) produces positive CGEvent deltaY
+        /// (scroll-up). Set to flip.
         var invert = false
+
+        /// The raw Cirque coordinate that feeds the position/velocity math.
+        var axis: Configuration.TouchStream.Axis = .y
 
         var directionSign: Double {
             invert ? -1 : 1
@@ -89,8 +96,8 @@ final class TouchScrollEngine {
     var config: Config
 
     private var state: State = .idle
-    private var lastY: Double = 0
-    private var samples: [(y: Double, timestamp: TimeInterval)] = []
+    private var lastPosition: Double = 0
+    private var samples: [(position: Double, timestamp: TimeInterval)] = []
     private var momentumVelocity = 0.0
     private var momentumBegan = false
     private var lastMomentumTimestamp: TimeInterval = 0
@@ -149,28 +156,38 @@ final class TouchScrollEngine {
         }
     }
 
+    /// The raw coordinate driving the scroll position math, per `Config.axis`.
+    private func position(of frame: TouchStreamFrame) -> Double {
+        switch config.axis {
+        case .x:
+            Double(frame.x)
+        case .y:
+            Double(frame.y)
+        }
+    }
+
     private func handleScrollTouch(frame: TouchStreamFrame) -> [Event] {
-        let y = Double(frame.y)
+        let position = position(of: frame)
 
         switch state {
         case .idle:
-            beginTouch(y: y, timestamp: frame.timestamp)
+            beginTouch(position: position, timestamp: frame.timestamp)
             return [.touchBegan]
 
         case .momentum:
             // The "catch": a finger touching down while coasting stops the
             // scroll dead, exactly like a real trackpad.
             let hadBegunMomentum = momentumBegan
-            beginTouch(y: y, timestamp: frame.timestamp)
+            beginTouch(position: position, timestamp: frame.timestamp)
             return hadBegunMomentum ? [.momentumEnded, .touchBegan] : [.touchBegan]
 
         case .touching:
-            var deltaCounts = y - lastY
+            var deltaCounts = position - lastPosition
             if abs(deltaCounts) > Self.maxPlausibleStepCounts {
                 deltaCounts = 0
             }
-            lastY = y
-            appendSample(y: y, timestamp: frame.timestamp)
+            lastPosition = position
+            appendSample(position: position, timestamp: frame.timestamp)
             let deltaY = deltaCounts * config.pointsPerCount * config.directionSign
             return [.touchChanged(deltaY: deltaY)]
         }
@@ -198,17 +215,17 @@ final class TouchScrollEngine {
         return [.touchEnded]
     }
 
-    private func beginTouch(y: Double, timestamp: TimeInterval) {
+    private func beginTouch(position: Double, timestamp: TimeInterval) {
         state = .touching
-        lastY = y
+        lastPosition = position
         momentumVelocity = 0
         momentumBegan = false
         samples.removeAll(keepingCapacity: true)
-        appendSample(y: y, timestamp: timestamp)
+        appendSample(position: position, timestamp: timestamp)
     }
 
-    private func appendSample(y: Double, timestamp: TimeInterval) {
-        samples.append((y: y, timestamp: timestamp))
+    private func appendSample(position: Double, timestamp: TimeInterval) {
+        samples.append((position: position, timestamp: timestamp))
         let cutoff = timestamp - Self.velocityWindow
         samples.removeAll { $0.timestamp < cutoff }
     }
@@ -225,7 +242,7 @@ final class TouchScrollEngine {
             return 0
         }
 
-        let countsPerSecond = (last.y - first.y) / dt
+        let countsPerSecond = (last.position - first.position) / dt
         return countsPerSecond * config.pointsPerCount * config.directionSign
     }
 

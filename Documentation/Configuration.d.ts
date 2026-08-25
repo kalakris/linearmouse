@@ -75,10 +75,16 @@ type TouchStream = {
   scale?: number;
 
   /**
-   * @description Inverts the scroll direction. By default, a finger moving toward increasing Cirque Y produces positive (scroll-up) deltas.
+   * @description Inverts the scroll direction. By default, a finger moving toward an increasing raw coordinate (on the selected axis) produces positive (scroll-up) deltas.
    * @default false
    */
   invert?: boolean;
+
+  /**
+   * @description The raw Cirque coordinate that feeds the scroll position and velocity math. Pads mounted rotated (e.g. the Go60, whose firmware streams raw coordinates without applying its rotate-90 pointer transform) report physical up/down motion on the raw X axis; select "x" for those.
+   * @default "y"
+   */
+  axis?: "x" | "y";
 };
 
 type Scheme = {

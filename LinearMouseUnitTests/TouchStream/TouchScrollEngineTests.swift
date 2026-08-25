@@ -10,9 +10,10 @@ final class TouchScrollEngineTests: XCTestCase {
 
     private func makeEngine(
         pointsPerCount: Double = 0.25,
-        invert: Bool = false
+        invert: Bool = false,
+        axis: Configuration.TouchStream.Axis = .y
     ) -> TouchScrollEngine {
-        TouchScrollEngine(config: .init(pointsPerCount: pointsPerCount, invert: invert))
+        TouchScrollEngine(config: .init(pointsPerCount: pointsPerCount, invert: invert, axis: axis))
     }
 
     private func scrollFrame(y: Int, at timestamp: TimeInterval, pad: UInt8 = 0) -> TouchStreamFrame {
@@ -191,6 +192,32 @@ final class TouchScrollEngineTests: XCTestCase {
             return
         }
         XCTAssertLessThan(firstDelta, 0)
+    }
+
+    func testAxisXDrivesDeltasFromRawXAndComposesWithInvert() {
+        // Rotated pad mount (Go60): physical up/down motion changes raw X.
+        let engine = makeEngine(axis: .x)
+        _ = engine.handle(frame: .init(x: 1000, y: 500, z: 40, touched: true, scrollMode: true, timestamp: 0))
+        let events = engine.handle(
+            frame: .init(x: 1030, y: 500, z: 40, touched: true, scrollMode: true, timestamp: Self.frameInterval)
+        )
+        XCTAssertEqual(events, [.touchChanged(deltaY: 7.5)])
+
+        // Raw-Y movement carries no scroll information on axis x.
+        let yOnly = engine.handle(
+            frame: .init(x: 1030, y: 900, z: 40, touched: true, scrollMode: true, timestamp: Self.frameInterval * 2)
+        )
+        XCTAssertEqual(yOnly, [.touchChanged(deltaY: 0)])
+
+        // invert composes with the axis selection unchanged.
+        let invertedEngine = makeEngine(invert: true, axis: .x)
+        _ = invertedEngine.handle(
+            frame: .init(x: 1000, y: 500, z: 40, touched: true, scrollMode: true, timestamp: 0)
+        )
+        let invertedEvents = invertedEngine.handle(
+            frame: .init(x: 1030, y: 500, z: 40, touched: true, scrollMode: true, timestamp: Self.frameInterval)
+        )
+        XCTAssertEqual(invertedEvents, [.touchChanged(deltaY: -7.5)])
     }
 
     func testScaleAppliesToDeltas() {

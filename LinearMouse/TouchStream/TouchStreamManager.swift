@@ -100,7 +100,8 @@ final class TouchStreamManager {
 
         let config = TouchScrollEngine.Config(
             pointsPerCount: touchStream.resolvedScale,
-            invert: touchStream.isInverted
+            invert: touchStream.isInverted,
+            axis: touchStream.resolvedAxis
         )
         EventThread.shared.perform { [weak self] in
             self?.engine.config = config

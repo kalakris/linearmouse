@@ -17,6 +17,15 @@ extension Configuration {
     /// The device itself is matched by hardcoded constants in
     /// `TouchStreamManager` for the prototype.
     struct TouchStream: Codable, Equatable {
+        /// Which raw Cirque coordinate feeds the scroll engine. The pads may
+        /// be mounted rotated (e.g. the Go60 applies `rotate-90` in firmware
+        /// to its relative pointer reports, but streams raw coordinates), in
+        /// which case physical up/down motion changes the raw X coordinate.
+        enum Axis: String, Codable {
+            case x
+            case y
+        }
+
         /// Whether touch-stream scrolling is active. Defaults to `true` when
         /// the `touchStream` object is present; the feature is entirely off
         /// when the object is absent.
@@ -26,14 +35,18 @@ extension Configuration {
         var scale: Decimal?
 
         /// Inverts the scroll direction. With `invert` unset or `false`, a
-        /// finger moving toward increasing Cirque Y produces positive
-        /// (scroll-up) deltas.
+        /// finger moving toward an increasing raw coordinate produces
+        /// positive (scroll-up) deltas.
         var invert: Bool?
 
-        init(enabled: Bool? = nil, scale: Decimal? = nil, invert: Bool? = nil) {
+        /// The raw coordinate used for scrolling. Defaults to `y`.
+        var axis: Axis?
+
+        init(enabled: Bool? = nil, scale: Decimal? = nil, invert: Bool? = nil, axis: Axis? = nil) {
             self.enabled = enabled
             self.scale = scale
             self.invert = invert
+            self.axis = axis
         }
     }
 }
@@ -52,5 +65,9 @@ extension Configuration.TouchStream {
 
     var isInverted: Bool {
         invert ?? false
+    }
+
+    var resolvedAxis: Axis {
+        axis ?? .y
     }
 }
