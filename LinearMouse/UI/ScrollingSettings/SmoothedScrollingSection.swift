@@ -9,6 +9,11 @@ extension ScrollingSettings {
         @ObservedObject private var state = ScrollingSettingsState.shared
         @State private var isPresetPickerPresented = false
 
+        /// The slider covers the useful sub-2 region; values outside it (up
+        /// to the full `inputScaleRange`) remain reachable via the config
+        /// file.
+        private static let inputScaleSliderRange: ClosedRange<Double> = 0.01 ... 2.0
+
         private var visiblePresets: [Scheme.Scrolling.Smoothed.Preset] {
             let recommended = Scheme.Scrolling.Smoothed.Preset.recommendedCases
             let current = state.smoothedPreset
@@ -74,6 +79,19 @@ extension ScrollingSettings {
                     minimumValueLabel: "Short",
                     maximumValueLabel: "Long",
                     formatter: state.smoothedInertiaFormatter
+                )
+
+                sliderRow(
+                    title: "Input scale",
+                    description: "(0.001–10, 1 = off)",
+                    value: Binding(
+                        get: { state.smoothedInputScale },
+                        set: { state.smoothedInputScale = $0 }
+                    ),
+                    range: Self.inputScaleSliderRange,
+                    minimumValueLabel: "Reduced",
+                    maximumValueLabel: "Amplified",
+                    formatter: state.smoothedInputScaleFormatter
                 )
 
                 Toggle(isOn: $state.smoothedBouncing) {
