@@ -32,6 +32,12 @@ class Device {
     var batteryLevel: Int?
     private let categoryValue: Category
 
+    /// Identity of the physical hardware behind this HID handle, captured at
+    /// enumeration. `nil` when the underlying `IOHIDDevice` could not be
+    /// resolved; callers must treat that as "identity unknown", never as a
+    /// wildcard match. Immutable value type, safe to read from any thread.
+    let physicalIdentity: HIDPhysicalDeviceIdentity?
+
     private weak var manager: DeviceManager?
     private var inputReportHandlers: [InputReportHandler] = []
     private var logitechReprogrammableControlsMonitor: LogitechReprogrammableControlsMonitor?
@@ -123,6 +129,7 @@ class Device {
         productID = device.productID
         serialNumber = device.serialNumber
         buttonCount = device.buttonCount
+        physicalIdentity = device.hidDevice.map { HIDPhysicalDeviceIdentity(hidDevice: $0) }
 
         let rawProductName = device.product
         let rawName = rawProductName ?? device.name

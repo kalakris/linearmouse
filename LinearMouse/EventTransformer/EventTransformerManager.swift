@@ -755,8 +755,7 @@ class EventTransformerManager {
         if let device,
            scheme.scrolling.$touchStream?.isEnabled == true {
             eventTransformer.append(TouchStreamWheelSuppressionTransformer(
-                vendorID: device.vendorID,
-                productID: device.productID
+                deviceIdentity: device.physicalIdentity
             ))
         }
 

@@ -24,9 +24,11 @@ import os.log
 ///   supported feature report are ignored entirely (non-streaming).
 /// - The touch-stream configuration lives on the per-device scheme
 ///   (`schemes[].scrolling.touchStream`), matched against the keyboard's
-///   pointer device (same vendor/product ID as the vendor collection). The
-///   scroll axis and default direction come from the device's self-reported
-///   orientation; the scheme only carries a natural/inverted override.
+///   pointer device. The pointer device is identified by physical identity
+///   (`HIDPhysicalDeviceIdentity`) rather than vendor/product ID, because
+///   multiple ZMK keyboards can share the same VID/PID. The scroll axis and
+///   default direction come from the device's self-reported orientation; the
+///   scheme only carries a natural/inverted override.
 ///
 /// Data flow and threading:
 /// - The input-report callback parses each report into a `TouchStreamFrame`
@@ -36,9 +38,11 @@ import os.log
 /// - `TouchScrollEngine` maps frames to gesture events; during momentum an
 ///   `EventThreadTimer` at 120 Hz drives the decay. `TouchStreamScrollPoster`
 ///   turns engine events into phased CGEvents posted to the session event tap.
-/// - `isStreamOpen(vendorID:productID:)` is thread-safe and is polled by
+/// - `isStreamOpen(for:)` is thread-safe and is polled by
 ///   `TouchStreamWheelSuppressionTransformer` on the event-tap thread to drop
-///   the firmware's fallback wheel events while the stream is connected.
+///   the firmware's fallback wheel events while the stream is connected. It
+///   matches on physical identity, so a second keyboard sharing the same
+///   VID/PID never has its wheel events suppressed.
 final class TouchStreamManager: ObservableObject {
     static let shared = TouchStreamManager()
 
@@ -53,9 +57,10 @@ final class TouchStreamManager: ObservableObject {
         static let usage = 0x01
     }
 
-    /// Identity of a streaming device, shared with the pointer device of the
-    /// same keyboard (the vendor collection and the pointer interface carry
-    /// the same vendor/product ID).
+    /// Vendor/product ID of a streaming device's vendor collection. NOT an
+    /// identity — multiple ZMK keyboards ship the same default VID/PID — only
+    /// a coarse pre-filter; physical identity is what links the vendor
+    /// collection to the pointer device of the *same* keyboard.
     struct StreamDeviceID: Hashable {
         var vendorID: Int
         var productID: Int
@@ -64,6 +69,7 @@ final class TouchStreamManager: ObservableObject {
     private struct StreamDevice {
         var device: IOHIDDevice
         var id: StreamDeviceID
+        var identity: HIDPhysicalDeviceIdentity
         var capabilities: TouchStreamCapabilities
     }
 
@@ -73,14 +79,15 @@ final class TouchStreamManager: ObservableObject {
     private var subscriptions = Set<AnyCancellable>()
     private var streamDevices: [StreamDevice] = []
 
-    /// Vendor/product IDs of connected, capability-verified streaming
+    /// Physical identities of connected, capability-verified streaming
     /// devices. Main-thread published for the UI ("Raw Touch" mode
     /// availability in the Scrolling settings).
-    @Published private(set) var streamingDeviceIDs: Set<StreamDeviceID> = []
+    @Published private(set) var streamingDeviceIdentities: [HIDPhysicalDeviceIdentity] = []
 
-    // Cross-thread mirror of `streamingDeviceIDs` for the event-tap path.
-    private let streamingDeviceIDsLock = NSLock()
-    private var lockedStreamingDeviceIDs: Set<StreamDeviceID> = []
+    // Cross-thread mirror of `streamingDeviceIdentities` for the event-tap
+    // path.
+    private let streamingDeviceIdentitiesLock = NSLock()
+    private var lockedStreamingDeviceIdentities: [HIDPhysicalDeviceIdentity] = []
 
     // Event-thread state. Only ever touched from EventThread blocks.
     private let engine = TouchScrollEngine()
@@ -97,27 +104,33 @@ final class TouchStreamManager: ObservableObject {
 
     // MARK: - Cross-thread queries
 
-    /// Whether a capability-verified streaming device with the given
-    /// vendor/product ID is currently connected. Safe to call from any
-    /// thread; used by the wheel-suppression transformer per event.
-    func isStreamOpen(vendorID: Int?, productID: Int?) -> Bool {
-        guard let vendorID, let productID else {
+    /// Whether a capability-verified streaming collection belonging to the
+    /// same physical device as `identity` is currently connected. Safe to
+    /// call from any thread; used by the wheel-suppression transformer per
+    /// event.
+    ///
+    /// Conservative on unknowns: a `nil` or indeterminate identity yields
+    /// `false`, so wheel events are never suppressed for a device we cannot
+    /// positively link to an open stream (visible double-scroll is the safe
+    /// failure; silently dropping another keyboard's scrolling is not).
+    func isStreamOpen(for identity: HIDPhysicalDeviceIdentity?) -> Bool {
+        guard let identity else {
             return false
         }
 
-        streamingDeviceIDsLock.lock()
-        defer { streamingDeviceIDsLock.unlock() }
-        return lockedStreamingDeviceIDs.contains(.init(vendorID: vendorID, productID: productID))
+        streamingDeviceIdentitiesLock.lock()
+        defer { streamingDeviceIdentitiesLock.unlock() }
+        return lockedStreamingDeviceIdentities.contains { $0.isSamePhysicalDevice(as: identity) }
     }
 
-    /// Whether `device` (a pointer device) belongs to a keyboard whose
-    /// streaming collection is currently connected. Main thread.
+    /// Whether `device` (a pointer device) belongs to the same physical
+    /// keyboard as a currently connected streaming collection. Main thread.
     func isStreamingDevice(_ device: Device) -> Bool {
-        guard let vendorID = device.vendorID, let productID = device.productID else {
+        guard let identity = device.physicalIdentity else {
             return false
         }
 
-        return streamingDeviceIDs.contains(.init(vendorID: vendorID, productID: productID))
+        return streamingDeviceIdentities.contains { $0.isSamePhysicalDevice(as: identity) }
     }
 
     // MARK: - Lifecycle (main thread)
@@ -156,7 +169,7 @@ final class TouchStreamManager: ObservableObject {
         subscriptions.removeAll()
         closeHIDManager()
         streamDevices.removeAll()
-        updateStreamingDeviceIDs()
+        updateStreamingDeviceIdentities()
         interruptGesture()
     }
 
@@ -219,8 +232,20 @@ final class TouchStreamManager: ObservableObject {
     ) -> Scheme.Scrolling.TouchStream? {
         let configuration = ConfigurationState.shared.configuration
 
-        if let pointerDevice = DeviceManager.shared.devices.first(where: {
-            $0.vendorID == streamDevice.id.vendorID && $0.productID == streamDevice.id.productID
+        // Anchor scheme resolution to the pointer device of the *same
+        // physical keyboard* as the vendor collection. VID/PID alone would be
+        // ambiguous (another ZMK keyboard with the default VID/PID could
+        // enumerate first), so it only pre-filters; physical identity
+        // decides.
+        if let pointerDevice = DeviceManager.shared.devices.first(where: { device in
+            guard device.vendorID == streamDevice.id.vendorID,
+                  device.productID == streamDevice.id.productID,
+                  let identity = device.physicalIdentity
+            else {
+                return false
+            }
+
+            return streamDevice.identity.isSamePhysicalDevice(as: identity)
         }) {
             return configuration.matchScheme(
                 withDevice: pointerDevice,
@@ -229,8 +254,9 @@ final class TouchStreamManager: ObservableObject {
             ).scrolling.$touchStream
         }
 
-        // The pointer device has not enumerated (yet); fall back to a matcher
-        // built from the vendor collection's own HID properties, which share
+        // The pointer device has not enumerated (yet) or could not be linked
+        // by physical identity; fall back to a matcher built from the vendor
+        // collection's own HID properties, which share
         // vendor/product/name/serial with the pointer interface.
         let matcher = DeviceMatcher(
             vendorID: streamDevice.id.vendorID,
@@ -289,7 +315,8 @@ final class TouchStreamManager: ObservableObject {
 
         // VID/PID narrows it to the Go60 right half; the usage pair selects
         // the vendor-defined collection among its HID interfaces. The report
-        // ID is deliberately not part of the match or the input-report parse.
+        // ID is not part of the match (IOHIDManager cannot match on it); the
+        // input-report callback filters on it instead — see `handleReport`.
         let matching: [String: Any] = [
             kIOHIDVendorIDKey: Constants.vendorID,
             kIOHIDProductIDKey: Constants.productID,
@@ -313,12 +340,12 @@ final class TouchStreamManager: ObservableObject {
             let manager = Unmanaged<TouchStreamManager>.fromOpaque(context).takeUnretainedValue()
             manager.deviceDidDisconnect(device)
         }, context)
-        IOHIDManagerRegisterInputReportCallback(manager, { context, result, _, type, _, report, reportLength in
+        IOHIDManagerRegisterInputReportCallback(manager, { context, result, _, type, reportID, report, reportLength in
             guard let context, result == kIOReturnSuccess, type == kIOHIDReportTypeInput else {
                 return
             }
             let manager = Unmanaged<TouchStreamManager>.fromOpaque(context).takeUnretainedValue()
-            manager.handleReport(bytes: report, length: reportLength)
+            manager.handleReport(reportID: reportID, bytes: report, length: reportLength)
         }, context)
 
         IOHIDManagerScheduleWithRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
@@ -393,9 +420,10 @@ final class TouchStreamManager: ObservableObject {
         streamDevices.append(.init(
             device: device,
             id: .init(vendorID: vendorID, productID: productID),
+            identity: HIDPhysicalDeviceIdentity(hidDevice: device),
             capabilities: capabilities
         ))
-        updateStreamingDeviceIDs()
+        updateStreamingDeviceIdentities()
         reconfigure()
     }
 
@@ -406,21 +434,21 @@ final class TouchStreamManager: ObservableObject {
 
         os_log("Touch stream device disconnected", log: Self.log, type: .info)
         streamDevices.removeAll { $0.device === device }
-        updateStreamingDeviceIDs()
+        updateStreamingDeviceIdentities()
         // Close out any gesture in flight so apps are not left mid-phase.
         interruptGesture()
         reconfigure()
     }
 
-    private func updateStreamingDeviceIDs() {
-        let ids = Set(streamDevices.map(\.id))
+    private func updateStreamingDeviceIdentities() {
+        let identities = streamDevices.map(\.identity)
 
-        streamingDeviceIDsLock.lock()
-        lockedStreamingDeviceIDs = ids
-        streamingDeviceIDsLock.unlock()
+        streamingDeviceIdentitiesLock.lock()
+        lockedStreamingDeviceIdentities = identities
+        streamingDeviceIdentitiesLock.unlock()
 
-        if streamingDeviceIDs != ids {
-            streamingDeviceIDs = ids
+        if streamingDeviceIdentities != identities {
+            streamingDeviceIdentities = identities
         }
     }
 
@@ -447,7 +475,17 @@ final class TouchStreamManager: ObservableObject {
     // MARK: - Report handling
 
     /// Called on the main run loop by the HID input-report callback.
-    private func handleReport(bytes: UnsafeMutablePointer<UInt8>, length: CFIndex) {
+    private func handleReport(reportID: UInt32, bytes: UnsafeMutablePointer<UInt8>, length: CFIndex) {
+        // Only touch frames (report ID 0x04) are ours. Depending on transport
+        // and collection splitting — over BLE in particular — macOS can
+        // deliver *other* input reports of the same HID service to this
+        // matched device (e.g. ZMK's 9-byte mouse report), which would parse
+        // as a phantom touch frame since `TouchStreamFrame` accepts any
+        // payload of sufficient length.
+        guard reportID == TouchStreamFrame.reportID else {
+            return
+        }
+
         guard length > 0 else {
             return
         }

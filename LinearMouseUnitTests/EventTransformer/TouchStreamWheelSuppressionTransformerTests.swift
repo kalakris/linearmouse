@@ -7,6 +7,7 @@ import XCTest
 
 final class TouchStreamWheelSuppressionTransformerTests: XCTestCase {
     private let context = EventTransformerContext(device: nil)
+    private let identity = HIDPhysicalDeviceIdentity(registryID: 0x1234, locationID: 0x14200000)
 
     private func makeScrollEvent(synthetic: Bool = false) -> CGEvent {
         let event = CGEvent(
@@ -22,46 +23,57 @@ final class TouchStreamWheelSuppressionTransformerTests: XCTestCase {
     }
 
     func testDropsWheelEventsWhileStreamIsOpen() {
-        var queried: [(Int?, Int?)] = []
+        var queried: [HIDPhysicalDeviceIdentity?] = []
         let transformer = TouchStreamWheelSuppressionTransformer(
-            vendorID: 0x16C0,
-            productID: 0x27D9
-        ) { vendorID, productID in
-            queried.append((vendorID, productID))
+            deviceIdentity: identity
+        ) { identity in
+            queried.append(identity)
             return true
         }
 
         XCTAssertNil(transformer.transform(makeScrollEvent(), in: context))
         XCTAssertEqual(queried.count, 1)
-        XCTAssertEqual(queried.first?.0, 0x16C0)
-        XCTAssertEqual(queried.first?.1, 0x27D9)
+        XCTAssertEqual(queried.first, identity)
     }
 
     func testPassesWheelEventsWhileStreamIsClosed() {
         let transformer = TouchStreamWheelSuppressionTransformer(
-            vendorID: 0x16C0,
-            productID: 0x27D9
-        ) { _, _ in false }
+            deviceIdentity: identity
+        ) { _ in false }
 
         XCTAssertNotNil(transformer.transform(makeScrollEvent(), in: context))
+    }
+
+    func testForwardsUnknownIdentityToProvider() {
+        // The transformer itself stays a pass-through pipe: the conservative
+        // "unknown identity never suppresses" decision lives in
+        // `TouchStreamManager.isStreamOpen(for:)`, which receives the nil.
+        var queried: [HIDPhysicalDeviceIdentity?] = []
+        let transformer = TouchStreamWheelSuppressionTransformer(
+            deviceIdentity: nil
+        ) { identity in
+            queried.append(identity)
+            return false
+        }
+
+        XCTAssertNotNil(transformer.transform(makeScrollEvent(), in: context))
+        XCTAssertEqual(queried, [nil])
     }
 
     func testNeverDropsSyntheticEvents() {
         // The touch-stream poster's own phased scroll events must always pass
         // through, even while the stream is open.
         let transformer = TouchStreamWheelSuppressionTransformer(
-            vendorID: 0x16C0,
-            productID: 0x27D9
-        ) { _, _ in true }
+            deviceIdentity: identity
+        ) { _ in true }
 
         XCTAssertNotNil(transformer.transform(makeScrollEvent(synthetic: true), in: context))
     }
 
     func testIgnoresNonScrollEvents() {
         let transformer = TouchStreamWheelSuppressionTransformer(
-            vendorID: 0x16C0,
-            productID: 0x27D9
-        ) { _, _ in true }
+            deviceIdentity: identity
+        ) { _ in true }
 
         let moveEvent = CGEvent(
             mouseEventSource: nil,

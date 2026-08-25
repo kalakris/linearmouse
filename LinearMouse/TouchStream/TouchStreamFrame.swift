@@ -6,8 +6,9 @@ import Foundation
 /// One absolute touch sample streamed by the keyboard's vendor-defined HID
 /// collection.
 ///
-/// Wire format (payload after the report ID; the report ID itself is not part
-/// of the contract and is never inspected):
+/// Wire format (payload after the report ID; frames are carried in input
+/// report `reportID` (0x04), which `TouchStreamManager` filters on before
+/// parsing — the payload itself does not repeat it):
 ///
 ///     byte 0: pad_id (0 = right pad; 1 = left pad, reserved)
 ///     bytes 1-2: x, uint16 little-endian, absolute Cirque coordinate (~0-2047)
@@ -18,6 +19,11 @@ import Foundation
 /// Cadence: one report per sample while touched (~100 Hz), exactly one release
 /// report (touched = 0) at lift-off, nothing while idle.
 struct TouchStreamFrame: Equatable {
+    /// HID input report ID carrying touch frames — a frozen protocol
+    /// constant, deliberately the same ID as the capability feature report
+    /// (`TouchStreamCapabilities.featureReportID`).
+    static let reportID: UInt32 = 0x04
+
     static let payloadLength = 7 // pad_id + x(2) + y(2) + z + flags
 
     var padID: UInt8

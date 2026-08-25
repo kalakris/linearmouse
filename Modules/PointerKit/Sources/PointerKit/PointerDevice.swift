@@ -254,6 +254,13 @@ public extension PointerDevice {
         serialNumberValue
     }
 
+    /// The underlying `IOHIDDevice`, when one could be resolved from the HID
+    /// event service. Exposed so callers can derive hardware-level identity
+    /// (IORegistry topology) that plain HID properties cannot provide.
+    var hidDevice: IOHIDDevice? {
+        device
+    }
+
     var buttonCount: Int? {
         buttonCountValue
     }

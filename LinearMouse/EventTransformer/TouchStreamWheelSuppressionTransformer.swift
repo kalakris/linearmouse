@@ -17,22 +17,26 @@ import Foundation
 /// gesture being in flight — to avoid edge races around gesture start/end,
 /// and turns itself off the moment the stream device disappears so the wheel
 /// fallback keeps working when only the pointer interface is present.
+///
+/// The stream is matched by the pointer device's *physical identity*
+/// (`HIDPhysicalDeviceIdentity`), never by vendor/product ID: multiple ZMK
+/// keyboards share the default VID/PID, and only the one actually streaming
+/// may have its wheel events dropped. When the identity is unknown, nothing
+/// is suppressed — a visible double-scroll on the streaming keyboard beats
+/// silently killing another keyboard's scrolling.
 final class TouchStreamWheelSuppressionTransformer: EventTransformer {
-    typealias StreamOpenProvider = (_ vendorID: Int?, _ productID: Int?) -> Bool
+    typealias StreamOpenProvider = (_ identity: HIDPhysicalDeviceIdentity?) -> Bool
 
-    private let vendorID: Int?
-    private let productID: Int?
+    private let deviceIdentity: HIDPhysicalDeviceIdentity?
     private let isStreamOpen: StreamOpenProvider
 
     init(
-        vendorID: Int?,
-        productID: Int?,
+        deviceIdentity: HIDPhysicalDeviceIdentity?,
         isStreamOpen: @escaping StreamOpenProvider = {
-            TouchStreamManager.shared.isStreamOpen(vendorID: $0, productID: $1)
+            TouchStreamManager.shared.isStreamOpen(for: $0)
         }
     ) {
-        self.vendorID = vendorID
-        self.productID = productID
+        self.deviceIdentity = deviceIdentity
         self.isStreamOpen = isStreamOpen
     }
 
@@ -44,7 +48,7 @@ final class TouchStreamWheelSuppressionTransformer: EventTransformer {
             return event
         }
 
-        guard isStreamOpen(vendorID, productID) else {
+        guard isStreamOpen(deviceIdentity) else {
             return event
         }
 
