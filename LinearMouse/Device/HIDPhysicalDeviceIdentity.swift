@@ -60,18 +60,6 @@ struct HIDPhysicalDeviceIdentity: Hashable {
     /// layer (see `transportAncestorRegistryID(startingAt:)`).
     var transportAncestorRegistryID: UInt64?
 
-    init(
-        registryID: UInt64? = nil,
-        locationID: Int? = nil,
-        serialNumber: String? = nil,
-        transportAncestorRegistryID: UInt64? = nil
-    ) {
-        self.registryID = registryID
-        self.locationID = locationID
-        self.serialNumber = serialNumber
-        self.transportAncestorRegistryID = transportAncestorRegistryID
-    }
-
     /// Whether `other` refers to the same physical device, per the precedence
     /// documented on the type. Conservative: returns `false` when identity is
     /// indeterminate.
