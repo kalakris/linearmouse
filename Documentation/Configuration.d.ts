@@ -52,118 +52,7 @@ export type Configuration = {
    */
   schemes?: Scheme[];
 
-  /**
-   * @title Touch-stream scrolling (experimental)
-   * @description Consumes absolute touch frames streamed over a vendor-defined HID report by a supported keyboard trackpad (MoErgo Go60 prototype firmware) and synthesizes trackpad-style scrolling with gesture phases and momentum. The feature is entirely off when this key is absent.
-   */
-  touchStream?: TouchStream;
 };
-
-type TouchStream = {
-  /**
-   * @description Whether touch-stream scrolling is active.
-   * @default true
-   */
-  enabled?: boolean;
-
-  /**
-   * @description Scroll scale in screen points per Cirque touch count (the pad reports ~0-1535 on the Y axis).
-   * @minimum 0.001
-   * @maximum 10
-   * @default 0.25
-   */
-  scale?: number;
-
-  /**
-   * @description Inverts the scroll direction. By default, a finger moving toward an increasing raw coordinate (on the selected axis) produces positive (scroll-up) deltas.
-   * @default false
-   */
-  invert?: boolean;
-
-  /**
-   * @description The raw Cirque coordinate that feeds the scroll position and velocity math. Pads mounted rotated (e.g. the Go60, whose firmware streams raw coordinates without applying its rotate-90 pointer transform) report physical up/down motion on the raw X axis; select "x" for those.
-   * @default "y"
-   */
-  axis?: "x" | "y";
-
-  /**
-   * @title Acceleration
-   * @description Velocity-dependent scroll gain ("ballistics"), mimicking Apple trackpad feel: slow drags scroll with sub-linear precision, fast flicks travel super-linearly. Each frame's delta is multiplied by clamp((smoothedSpeed / referenceSpeed) ^ exponent, minGain, maxGain), where smoothedSpeed is the lightly smoothed finger speed in raw Cirque counts per second. Momentum after a flick is seeded from the boosted output velocity.
-   */
-  acceleration?: TouchStream.Acceleration;
-
-  /**
-   * @title Tap to click
-   * @description Host-side tap-to-click: a short, nearly stationary pointer-context touch posts a synthetic left click at the cursor. Restores the Cirque hardware tap-to-click lost when the pad switched to absolute mode. Consecutive taps chain into double- and triple-clicks.
-   */
-  tapToClick?: TouchStream.TapToClick;
-};
-
-declare namespace TouchStream {
-  type Acceleration = {
-    /**
-     * @description Whether the velocity-dependent gain is active. Unlike the parent touchStream.enabled, this defaults to false even when the acceleration object is present; when off, scrolling is exactly linear.
-     * @default false
-     */
-    enabled?: boolean;
-
-    /**
-     * @description Exponent of the gain curve. 0 makes the curve the identity (plain linear scrolling); 0.5 doubles the gain for every 4x increase in finger speed.
-     * @minimum 0
-     * @maximum 2
-     * @default 0.5
-     */
-    exponent?: number;
-
-    /**
-     * @description Finger speed, in raw Cirque counts per second, at which the gain is exactly 1. The pad reports ~38 counts/mm, so the default 800 counts/s is about 2 cm/s of finger motion.
-     * @minimum 50
-     * @maximum 20000
-     * @default 800
-     */
-    referenceSpeed?: number;
-
-    /**
-     * @description Lower clamp on the gain, applied to slow precise motion.
-     * @minimum 0.05
-     * @maximum 1
-     * @default 0.4
-     */
-    minGain?: number;
-
-    /**
-     * @description Upper clamp on the gain, applied to fast flicks.
-     * @minimum 1
-     * @maximum 20
-     * @default 3
-     */
-    maxGain?: number;
-  };
-
-  type TapToClick = {
-    /**
-     * @description Whether tap-to-click is active. Unlike the parent touchStream.enabled, this defaults to false even when the tapToClick object is present.
-     * @default false
-     */
-    enabled?: boolean;
-
-    /**
-     * @description Maximum touch duration in milliseconds for a touch to count as a tap.
-     * @minimum 50
-     * @maximum 1000
-     * @default 180
-     */
-    maxDurationMs?: number;
-
-    /**
-     * @description Maximum movement for a touch to count as a tap, in raw Cirque counts (the larger of the X and Y excursions over the whole touch; the pad reports ~38 counts/mm).
-     * @minimum 1
-     * @maximum 500
-     * @default 30
-     */
-    maxMovement?: number;
-  };
-}
 
 type Scheme = {
   /**
@@ -326,6 +215,12 @@ declare namespace Scheme {
      * @title Modifier keys settings
      */
     modifiers?: Scrolling.Bidirectional<Scrolling.Modifiers>;
+
+    /**
+     * @title Touch-stream scrolling
+     * @description Consumes absolute touch frames streamed over a vendor-defined HID report by a supported keyboard trackpad (MoErgo Go60) and synthesizes trackpad-style scrolling with gesture phases and momentum. Applies when the scheme matches the keyboard's pointer device (same vendor/product ID as the streaming HID collection). The scroll axis and default direction are derived automatically from the pad orientation self-reported in the device's capability feature report; `direction` optionally flips it. Touch-stream settings are direction-agnostic (not Bidirectional). The feature is entirely off when this key is absent.
+     */
+    touchStream?: Scrolling.TouchStream;
   };
 
   namespace Scrolling {
@@ -516,6 +411,138 @@ declare namespace Scheme {
         | ZoomReversed
         | PinchZoom
         | PinchZoomReversed;
+    }
+
+    type TouchStream = {
+      /**
+       * @description Whether touch-stream scrolling is active.
+       * @default true
+       */
+      enabled?: boolean;
+
+      /**
+       * @description Scroll scale in screen points per Cirque touch count. The pad self-reports its resolution (≈38 counts/mm), but scale is kept in points-per-count: multiply by counts/mm if you want to think in points per millimeter.
+       * @minimum 0.001
+       * @maximum 10
+       * @default 0.25
+       */
+      scale?: number;
+
+      /**
+       * @description Scroll direction override. "natural" (the default) preserves the pad's native direction as derived from its self-reported orientation; "inverted" flips it. Replaces the removed manual `axis`/`invert` keys, which are now derived from the device's capability feature report.
+       * @default "natural"
+       */
+      direction?: "natural" | "inverted";
+
+      /**
+       * @title Acceleration
+       * @description Velocity-dependent scroll gain ("ballistics"), mimicking Apple trackpad feel: slow drags scroll with sub-linear precision, fast flicks travel super-linearly. Each frame's delta is multiplied by clamp((smoothedSpeed / referenceSpeed) ^ exponent, minGain, maxGain), where smoothedSpeed is the lightly smoothed finger speed in raw Cirque counts per second. Momentum after a flick is seeded from the boosted output velocity.
+       */
+      acceleration?: TouchStream.Acceleration;
+
+      /**
+       * @title Momentum
+       * @description Momentum ("coasting") tuning: how the scroll velocity measured at lift-off decays after the finger leaves the pad.
+       */
+      momentum?: TouchStream.Momentum;
+
+      /**
+       * @title Tap to click (deprecated)
+       * @description DEPRECATED: host-side tap-to-click for pointer-context touches. The firmware now implements tap-to-click itself; leave this off (the default) unless running older firmware, or taps will double-click.
+       */
+      tapToClick?: TouchStream.TapToClick;
+    };
+
+    namespace TouchStream {
+      type Acceleration = {
+        /**
+         * @description Whether the velocity-dependent gain is active. Unlike the parent touchStream.enabled, this defaults to false even when the acceleration object is present; when off, scrolling is exactly linear.
+         * @default false
+         */
+        enabled?: boolean;
+
+        /**
+         * @description Exponent of the gain curve. 0 makes the curve the identity (plain linear scrolling); 0.5 doubles the gain for every 4x increase in finger speed.
+         * @minimum 0
+         * @maximum 2
+         * @default 0.5
+         */
+        exponent?: number;
+
+        /**
+         * @description Finger speed, in raw Cirque counts per second, at which the gain is exactly 1. The pad reports ~38 counts/mm, so the default 800 counts/s is about 2 cm/s of finger motion.
+         * @minimum 50
+         * @maximum 20000
+         * @default 800
+         */
+        referenceSpeed?: number;
+
+        /**
+         * @description Lower clamp on the gain, applied to slow precise motion.
+         * @minimum 0.05
+         * @maximum 1
+         * @default 0.4
+         */
+        minGain?: number;
+
+        /**
+         * @description Upper clamp on the gain, applied to fast flicks.
+         * @minimum 1
+         * @maximum 20
+         * @default 3
+         */
+        maxGain?: number;
+      };
+
+      type Momentum = {
+        /**
+         * @description Exponential decay time constant of the momentum velocity, in seconds. Larger values coast longer. The default matches a decay factor of ~0.99 per 120 Hz tick.
+         * @minimum 0.05
+         * @maximum 5
+         * @default 0.83
+         */
+        decayTimeConstant?: number;
+
+        /**
+         * @description Minimum lift-off speed, in scroll points per second, required to enter momentum at all. Raise it to make coasting harder to trigger.
+         * @minimum 0
+         * @maximum 5000
+         * @default 100
+         */
+        startThreshold?: number;
+
+        /**
+         * @description Safety cap on the momentum seed velocity, in scroll points per second.
+         * @minimum 100
+         * @maximum 50000
+         * @default 8000
+         */
+        maxSpeed?: number;
+      };
+
+      type TapToClick = {
+        /**
+         * @description Whether tap-to-click is active. Unlike the parent touchStream.enabled, this defaults to false even when the tapToClick object is present.
+         * @default false
+         */
+        enabled?: boolean;
+
+        /**
+         * @description Maximum touch duration in milliseconds for a touch to count as a tap.
+         * @minimum 50
+         * @maximum 1000
+         * @default 180
+         */
+        maxDurationMs?: number;
+
+        /**
+         * @description Maximum movement for a touch to count as a tap, in raw Cirque counts (the larger of the X and Y excursions over the whole touch; the pad reports ~38 counts/mm).
+         * @minimum 1
+         * @maximum 500
+         * @default 30
+         */
+        maxMovement?: number;
+      };
     }
   }
 

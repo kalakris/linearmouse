@@ -37,11 +37,6 @@
           },
           "title": "Schemes",
           "type": "array"
-        },
-        "touchStream": {
-          "$ref": "#/definitions/TouchStream",
-          "description": "Consumes absolute touch frames streamed over a vendor-defined HID report by a supported keyboard trackpad (MoErgo Go60 prototype firmware) and synthesizes trackpad-style scrolling with gesture phases and momentum. The feature is entirely off when this key is absent.",
-          "title": "Touch-stream scrolling (experimental)"
         }
       },
       "type": "object"
@@ -1584,6 +1579,11 @@
           ],
           "default": 0,
           "description": "The scrolling speed."
+        },
+        "touchStream": {
+          "$ref": "#/definitions/Scheme.Scrolling.TouchStream",
+          "description": "Consumes absolute touch frames streamed over a vendor-defined HID report by a supported keyboard trackpad (MoErgo Go60) and synthesizes trackpad-style scrolling with gesture phases and momentum. Applies when the scheme matches the keyboard's pointer device (same vendor/product ID as the streaming HID collection). The scroll axis and default direction are derived automatically from the pad orientation self-reported in the device's capability feature report; `direction` optionally flips it. Touch-stream settings are direction-agnostic (not Bidirectional). The feature is entirely off when this key is absent.",
+          "title": "Touch-stream scrolling"
         }
       },
       "type": "object"
@@ -1879,6 +1879,139 @@
       ],
       "type": "string"
     },
+    "Scheme.Scrolling.TouchStream": {
+      "additionalProperties": false,
+      "properties": {
+        "acceleration": {
+          "$ref": "#/definitions/Scheme.Scrolling.TouchStream.Acceleration",
+          "description": "Velocity-dependent scroll gain (\"ballistics\"), mimicking Apple trackpad feel: slow drags scroll with sub-linear precision, fast flicks travel super-linearly. Each frame's delta is multiplied by clamp((smoothedSpeed / referenceSpeed) ^ exponent, minGain, maxGain), where smoothedSpeed is the lightly smoothed finger speed in raw Cirque counts per second. Momentum after a flick is seeded from the boosted output velocity.",
+          "title": "Acceleration"
+        },
+        "direction": {
+          "default": "natural",
+          "description": "Scroll direction override. \"natural\" (the default) preserves the pad's native direction as derived from its self-reported orientation; \"inverted\" flips it. Replaces the removed manual `axis`/`invert` keys, which are now derived from the device's capability feature report.",
+          "enum": [
+            "natural",
+            "inverted"
+          ],
+          "type": "string"
+        },
+        "enabled": {
+          "default": true,
+          "description": "Whether touch-stream scrolling is active.",
+          "type": "boolean"
+        },
+        "momentum": {
+          "$ref": "#/definitions/Scheme.Scrolling.TouchStream.Momentum",
+          "description": "Momentum (\"coasting\") tuning: how the scroll velocity measured at lift-off decays after the finger leaves the pad.",
+          "title": "Momentum"
+        },
+        "scale": {
+          "default": 0.25,
+          "description": "Scroll scale in screen points per Cirque touch count. The pad self-reports its resolution (≈38 counts/mm), but scale is kept in points-per-count: multiply by counts/mm if you want to think in points per millimeter.",
+          "maximum": 10,
+          "minimum": 0.001,
+          "type": "number"
+        },
+        "tapToClick": {
+          "$ref": "#/definitions/Scheme.Scrolling.TouchStream.TapToClick",
+          "description": "DEPRECATED: host-side tap-to-click for pointer-context touches. The firmware now implements tap-to-click itself; leave this off (the default) unless running older firmware, or taps will double-click.",
+          "title": "Tap to click (deprecated)"
+        }
+      },
+      "type": "object"
+    },
+    "Scheme.Scrolling.TouchStream.Acceleration": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": false,
+          "description": "Whether the velocity-dependent gain is active. Unlike the parent touchStream.enabled, this defaults to false even when the acceleration object is present; when off, scrolling is exactly linear.",
+          "type": "boolean"
+        },
+        "exponent": {
+          "default": 0.5,
+          "description": "Exponent of the gain curve. 0 makes the curve the identity (plain linear scrolling); 0.5 doubles the gain for every 4x increase in finger speed.",
+          "maximum": 2,
+          "minimum": 0,
+          "type": "number"
+        },
+        "maxGain": {
+          "default": 3,
+          "description": "Upper clamp on the gain, applied to fast flicks.",
+          "maximum": 20,
+          "minimum": 1,
+          "type": "number"
+        },
+        "minGain": {
+          "default": 0.4,
+          "description": "Lower clamp on the gain, applied to slow precise motion.",
+          "maximum": 1,
+          "minimum": 0.05,
+          "type": "number"
+        },
+        "referenceSpeed": {
+          "default": 800,
+          "description": "Finger speed, in raw Cirque counts per second, at which the gain is exactly 1. The pad reports ~38 counts/mm, so the default 800 counts/s is about 2 cm/s of finger motion.",
+          "maximum": 20000,
+          "minimum": 50,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "Scheme.Scrolling.TouchStream.Momentum": {
+      "additionalProperties": false,
+      "properties": {
+        "decayTimeConstant": {
+          "default": 0.83,
+          "description": "Exponential decay time constant of the momentum velocity, in seconds. Larger values coast longer. The default matches a decay factor of ~0.99 per 120 Hz tick.",
+          "maximum": 5,
+          "minimum": 0.05,
+          "type": "number"
+        },
+        "maxSpeed": {
+          "default": 8000,
+          "description": "Safety cap on the momentum seed velocity, in scroll points per second.",
+          "maximum": 50000,
+          "minimum": 100,
+          "type": "number"
+        },
+        "startThreshold": {
+          "default": 100,
+          "description": "Minimum lift-off speed, in scroll points per second, required to enter momentum at all. Raise it to make coasting harder to trigger.",
+          "maximum": 5000,
+          "minimum": 0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "Scheme.Scrolling.TouchStream.TapToClick": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": false,
+          "description": "Whether tap-to-click is active. Unlike the parent touchStream.enabled, this defaults to false even when the tapToClick object is present.",
+          "type": "boolean"
+        },
+        "maxDurationMs": {
+          "default": 180,
+          "description": "Maximum touch duration in milliseconds for a touch to count as a tap.",
+          "maximum": 1000,
+          "minimum": 50,
+          "type": "number"
+        },
+        "maxMovement": {
+          "default": 30,
+          "description": "Maximum movement for a touch to count as a tap, in raw Cirque counts (the larger of the X and Y excursions over the whole touch; the pad reports ~38 counts/mm).",
+          "maximum": 500,
+          "minimum": 1,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
     "Secondary": {
       "const": 1,
       "description": "Secondary button, usually the right button.",
@@ -1922,112 +2055,6 @@
           "type": "array"
         }
       ]
-    },
-    "TouchStream": {
-      "additionalProperties": false,
-      "properties": {
-        "acceleration": {
-          "$ref": "#/definitions/TouchStream.Acceleration",
-          "description": "Velocity-dependent scroll gain (\"ballistics\"), mimicking Apple trackpad feel: slow drags scroll with sub-linear precision, fast flicks travel super-linearly. Each frame's delta is multiplied by clamp((smoothedSpeed / referenceSpeed) ^ exponent, minGain, maxGain), where smoothedSpeed is the lightly smoothed finger speed in raw Cirque counts per second. Momentum after a flick is seeded from the boosted output velocity.",
-          "title": "Acceleration"
-        },
-        "axis": {
-          "default": "y",
-          "description": "The raw Cirque coordinate that feeds the scroll position and velocity math. Pads mounted rotated (e.g. the Go60, whose firmware streams raw coordinates without applying its rotate-90 pointer transform) report physical up/down motion on the raw X axis; select \"x\" for those.",
-          "enum": [
-            "x",
-            "y"
-          ],
-          "type": "string"
-        },
-        "enabled": {
-          "default": true,
-          "description": "Whether touch-stream scrolling is active.",
-          "type": "boolean"
-        },
-        "invert": {
-          "default": false,
-          "description": "Inverts the scroll direction. By default, a finger moving toward an increasing raw coordinate (on the selected axis) produces positive (scroll-up) deltas.",
-          "type": "boolean"
-        },
-        "scale": {
-          "default": 0.25,
-          "description": "Scroll scale in screen points per Cirque touch count (the pad reports ~0-1535 on the Y axis).",
-          "maximum": 10,
-          "minimum": 0.001,
-          "type": "number"
-        },
-        "tapToClick": {
-          "$ref": "#/definitions/TouchStream.TapToClick",
-          "description": "Host-side tap-to-click: a short, nearly stationary pointer-context touch posts a synthetic left click at the cursor. Restores the Cirque hardware tap-to-click lost when the pad switched to absolute mode. Consecutive taps chain into double- and triple-clicks.",
-          "title": "Tap to click"
-        }
-      },
-      "type": "object"
-    },
-    "TouchStream.Acceleration": {
-      "additionalProperties": false,
-      "properties": {
-        "enabled": {
-          "default": false,
-          "description": "Whether the velocity-dependent gain is active. Unlike the parent touchStream.enabled, this defaults to false even when the acceleration object is present; when off, scrolling is exactly linear.",
-          "type": "boolean"
-        },
-        "exponent": {
-          "default": 0.5,
-          "description": "Exponent of the gain curve. 0 makes the curve the identity (plain linear scrolling); 0.5 doubles the gain for every 4x increase in finger speed.",
-          "maximum": 2,
-          "minimum": 0,
-          "type": "number"
-        },
-        "maxGain": {
-          "default": 3,
-          "description": "Upper clamp on the gain, applied to fast flicks.",
-          "maximum": 20,
-          "minimum": 1,
-          "type": "number"
-        },
-        "minGain": {
-          "default": 0.4,
-          "description": "Lower clamp on the gain, applied to slow precise motion.",
-          "maximum": 1,
-          "minimum": 0.05,
-          "type": "number"
-        },
-        "referenceSpeed": {
-          "default": 800,
-          "description": "Finger speed, in raw Cirque counts per second, at which the gain is exactly 1. The pad reports ~38 counts/mm, so the default 800 counts/s is about 2 cm/s of finger motion.",
-          "maximum": 20000,
-          "minimum": 50,
-          "type": "number"
-        }
-      },
-      "type": "object"
-    },
-    "TouchStream.TapToClick": {
-      "additionalProperties": false,
-      "properties": {
-        "enabled": {
-          "default": false,
-          "description": "Whether tap-to-click is active. Unlike the parent touchStream.enabled, this defaults to false even when the tapToClick object is present.",
-          "type": "boolean"
-        },
-        "maxDurationMs": {
-          "default": 180,
-          "description": "Maximum touch duration in milliseconds for a touch to count as a tap.",
-          "maximum": 1000,
-          "minimum": 50,
-          "type": "number"
-        },
-        "maxMovement": {
-          "default": 30,
-          "description": "Maximum movement for a touch to count as a tap, in raw Cirque counts (the larger of the X and Y excursions over the whole touch; the pad reports ~38 counts/mm).",
-          "maximum": 500,
-          "minimum": 1,
-          "type": "number"
-        }
-      },
-      "type": "object"
     },
     "Unset": {
       "const": "unset",
