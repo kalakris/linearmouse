@@ -1951,6 +1951,36 @@
           "maximum": 10,
           "minimum": 0.001,
           "type": "number"
+        },
+        "tapToClick": {
+          "$ref": "#/definitions/TouchStream.TapToClick",
+          "description": "Host-side tap-to-click: a short, nearly stationary pointer-context touch posts a synthetic left click at the cursor. Restores the Cirque hardware tap-to-click lost when the pad switched to absolute mode. Consecutive taps chain into double- and triple-clicks.",
+          "title": "Tap to click"
+        }
+      },
+      "type": "object"
+    },
+    "TouchStream.TapToClick": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": false,
+          "description": "Whether tap-to-click is active. Unlike the parent touchStream.enabled, this defaults to false even when the tapToClick object is present.",
+          "type": "boolean"
+        },
+        "maxDurationMs": {
+          "default": 180,
+          "description": "Maximum touch duration in milliseconds for a touch to count as a tap.",
+          "maximum": 1000,
+          "minimum": 50,
+          "type": "number"
+        },
+        "maxMovement": {
+          "default": 30,
+          "description": "Maximum movement for a touch to count as a tap, in raw Cirque counts (the larger of the X and Y excursions over the whole touch; the pad reports ~38 counts/mm).",
+          "maximum": 500,
+          "minimum": 1,
+          "type": "number"
         }
       },
       "type": "object"
