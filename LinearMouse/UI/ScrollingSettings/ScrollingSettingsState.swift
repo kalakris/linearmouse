@@ -351,6 +351,19 @@ extension ScrollingSettingsState {
         decimalFormatter(maxFractionDigits: 2)
     }
 
+    var smoothedInputScale: Double {
+        get { currentSmoothedConfiguration?.inputScale?.asTruncatedDouble ?? 1 }
+        set {
+            updateSmoothedConfiguration {
+                $0.inputScale = Decimal(newValue).rounded(3)
+            }
+        }
+    }
+
+    var smoothedInputScaleFormatter: NumberFormatter {
+        decimalFormatter(maxFractionDigits: 3)
+    }
+
     var smoothedBouncing: Bool {
         get { currentSmoothedConfiguration?.allowsBouncing ?? true }
         set {

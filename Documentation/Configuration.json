@@ -1845,6 +1845,13 @@
           "description": "The scrolling inertia.",
           "type": "number"
         },
+        "inputScale": {
+          "default": 1,
+          "description": "Scales raw input deltas before the smoothing curve is applied. Use values below 1 to tame high-resolution devices that report large per-event deltas.",
+          "maximum": 10,
+          "minimum": 0.001,
+          "type": "number"
+        },
         "preset": {
           "$ref": "#/definitions/Scheme.Scrolling.Smoothed.Preset",
           "default": "easeInOut",
