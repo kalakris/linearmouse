@@ -749,6 +749,17 @@ class EventTransformerManager {
 
         var eventTransformer: [EventTransformer] = []
 
+        // First in the chain: while this device's touch stream is connected,
+        // its discrete wheel events are a firmware fallback that would
+        // double-fire on top of the synthesized touch scrolling.
+        if let device,
+           scheme.scrolling.$touchStream?.isEnabled == true {
+            eventTransformer.append(TouchStreamWheelSuppressionTransformer(
+                vendorID: device.vendorID,
+                productID: device.productID
+            ))
+        }
+
         if let reverse = scheme.scrolling.$reverse {
             let vertical = reverse.vertical ?? false
             let horizontal = reverse.horizontal ?? false
