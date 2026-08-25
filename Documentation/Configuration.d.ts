@@ -51,6 +51,34 @@ export type Configuration = {
    * @examples [{"if":{"device":{"category":"mouse"}},"scrolling":{"reverse":"vertical"}}]
    */
   schemes?: Scheme[];
+
+  /**
+   * @title Touch-stream scrolling (experimental)
+   * @description Consumes absolute touch frames streamed over a vendor-defined HID report by a supported keyboard trackpad (MoErgo Go60 prototype firmware) and synthesizes trackpad-style scrolling with gesture phases and momentum. The feature is entirely off when this key is absent.
+   */
+  touchStream?: TouchStream;
+};
+
+type TouchStream = {
+  /**
+   * @description Whether touch-stream scrolling is active.
+   * @default true
+   */
+  enabled?: boolean;
+
+  /**
+   * @description Scroll scale in screen points per Cirque touch count (the pad reports ~0-1535 on the Y axis).
+   * @minimum 0.001
+   * @maximum 10
+   * @default 0.25
+   */
+  scale?: number;
+
+  /**
+   * @description Inverts the scroll direction. By default, a finger moving toward increasing Cirque Y produces positive (scroll-up) deltas.
+   * @default false
+   */
+  invert?: boolean;
 };
 
 type Scheme = {
