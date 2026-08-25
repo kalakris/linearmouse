@@ -42,8 +42,54 @@ extension Configuration {
         /// The raw coordinate used for scrolling. Defaults to `y`.
         var axis: Axis?
 
+        /// Velocity-dependent scroll gain ("ballistics"). Absent = off.
+        var acceleration: Acceleration?
+
         /// Host-side tap-to-click for the pointer context. Absent = off.
         var tapToClick: TapToClick?
+
+        /// Apple-trackpad-style scroll ballistics: slow drags scroll with
+        /// sub-linear precision, fast flicks travel super-linearly.
+        ///
+        /// The per-frame gain is
+        /// `clamp((smoothedSpeed / referenceSpeed) ^ exponent, minGain, maxGain)`
+        /// where `smoothedSpeed` is the lightly smoothed finger speed in raw
+        /// Cirque counts per second. `exponent` 0 makes the curve the
+        /// identity (plain linear scrolling).
+        struct Acceleration: Codable, Equatable {
+            /// Whether the velocity-dependent gain is active. Like
+            /// `tapToClick.enabled`, this defaults to `false` even when the
+            /// `acceleration` object is present.
+            var enabled: Bool?
+
+            /// Exponent of the gain curve. 0 is the identity; 0.5 doubles
+            /// the gain for every 4x increase in finger speed.
+            var exponent: Decimal?
+
+            /// Finger speed in raw counts/second at which the gain is exactly
+            /// 1 (the pad reports ~38 counts/mm, so 800 counts/s ≈ 2 cm/s).
+            var referenceSpeed: Decimal?
+
+            /// Lower gain clamp, applied to slow-motion frames.
+            var minGain: Decimal?
+
+            /// Upper gain clamp, applied to fast flicks.
+            var maxGain: Decimal?
+
+            init(
+                enabled: Bool? = nil,
+                exponent: Decimal? = nil,
+                referenceSpeed: Decimal? = nil,
+                minGain: Decimal? = nil,
+                maxGain: Decimal? = nil
+            ) {
+                self.enabled = enabled
+                self.exponent = exponent
+                self.referenceSpeed = referenceSpeed
+                self.minGain = minGain
+                self.maxGain = maxGain
+            }
+        }
 
         /// Tap-to-click on pointer-context frames (touched, scroll mode off).
         ///
@@ -75,12 +121,14 @@ extension Configuration {
             scale: Decimal? = nil,
             invert: Bool? = nil,
             axis: Axis? = nil,
+            acceleration: Acceleration? = nil,
             tapToClick: TapToClick? = nil
         ) {
             self.enabled = enabled
             self.scale = scale
             self.invert = invert
             self.axis = axis
+            self.acceleration = acceleration
             self.tapToClick = tapToClick
         }
     }
@@ -108,6 +156,40 @@ extension Configuration.TouchStream {
 
     var isTapToClickEnabled: Bool {
         tapToClick?.isEnabled ?? false
+    }
+}
+
+extension Configuration.TouchStream.Acceleration {
+    static let exponentRange: ClosedRange<Double> = 0 ... 2
+    static let defaultExponent = 0.5
+
+    static let referenceSpeedRange: ClosedRange<Double> = 50 ... 20000
+    static let defaultReferenceSpeed = 800.0
+
+    static let minGainRange: ClosedRange<Double> = 0.05 ... 1.0
+    static let defaultMinGain = 0.4
+
+    static let maxGainRange: ClosedRange<Double> = 1.0 ... 20.0
+    static let defaultMaxGain = 3.0
+
+    var isEnabled: Bool {
+        enabled ?? false
+    }
+
+    var resolvedExponent: Double {
+        (exponent?.asTruncatedDouble ?? Self.defaultExponent).clamped(to: Self.exponentRange)
+    }
+
+    var resolvedReferenceSpeed: Double {
+        (referenceSpeed?.asTruncatedDouble ?? Self.defaultReferenceSpeed).clamped(to: Self.referenceSpeedRange)
+    }
+
+    var resolvedMinGain: Double {
+        (minGain?.asTruncatedDouble ?? Self.defaultMinGain).clamped(to: Self.minGainRange)
+    }
+
+    var resolvedMaxGain: Double {
+        (maxGain?.asTruncatedDouble ?? Self.defaultMaxGain).clamped(to: Self.maxGainRange)
     }
 }
 
