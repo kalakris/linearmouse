@@ -53,6 +53,9 @@ final class TouchStreamManager {
     // Event-thread state. Only ever touched from EventThread blocks.
     private let engine = TouchScrollEngine()
     private let poster = TouchStreamScrollPoster()
+    private let tapRecognizer = TouchTapRecognizer()
+    private let clickPoster = TouchStreamClickPoster()
+    private var tapToClickEnabled = false
     private var momentumTimer: EventThreadTimer?
 
     private let now: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
@@ -103,8 +106,23 @@ final class TouchStreamManager {
             invert: touchStream.isInverted,
             axis: touchStream.resolvedAxis
         )
+        let tapToClick = touchStream.tapToClick ?? .init()
+        let tapConfig = TouchTapRecognizer.Config(
+            maxDuration: tapToClick.resolvedMaxDuration,
+            maxMovementCounts: tapToClick.resolvedMaxMovement
+        )
+        let tapToClickEnabled = touchStream.isTapToClickEnabled
         EventThread.shared.perform { [weak self] in
-            self?.engine.config = config
+            guard let self else {
+                return
+            }
+
+            engine.config = config
+            tapRecognizer.config = tapConfig
+            if !tapToClickEnabled {
+                tapRecognizer.reset()
+            }
+            self.tapToClickEnabled = tapToClickEnabled
         }
 
         openHIDManagerIfNeeded()
@@ -233,6 +251,13 @@ final class TouchStreamManager {
             poster.post(event)
         }
 
+        // Tap-to-click watches the same frame stream but is entirely
+        // independent of the scroll engine: it recognizes pointer-context
+        // touches, which the engine ignores, and vice versa.
+        if tapToClickEnabled, let tap = tapRecognizer.handle(frame: frame) {
+            clickPoster.post(tap)
+        }
+
         updateMomentumTimer()
     }
 
@@ -274,6 +299,7 @@ final class TouchStreamManager {
                 poster.post(event)
             }
             poster.closeGestureSeriesIfNeeded()
+            tapRecognizer.reset()
             momentumTimer?.invalidate()
             momentumTimer = nil
         }
