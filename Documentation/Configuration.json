@@ -37,6 +37,11 @@
           },
           "title": "Schemes",
           "type": "array"
+        },
+        "touchStream": {
+          "$ref": "#/definitions/TouchStream",
+          "description": "Consumes absolute touch frames streamed over a vendor-defined HID report by a supported keyboard trackpad (MoErgo Go60 prototype firmware) and synthesizes trackpad-style scrolling with gesture phases and momentum. The feature is entirely off when this key is absent.",
+          "title": "Touch-stream scrolling (experimental)"
         }
       },
       "type": "object"
@@ -1924,6 +1929,29 @@
           "type": "array"
         }
       ]
+    },
+    "TouchStream": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": true,
+          "description": "Whether touch-stream scrolling is active.",
+          "type": "boolean"
+        },
+        "invert": {
+          "default": false,
+          "description": "Inverts the scroll direction. By default, a finger moving toward increasing Cirque Y produces positive (scroll-up) deltas.",
+          "type": "boolean"
+        },
+        "scale": {
+          "default": 0.25,
+          "description": "Scroll scale in screen points per Cirque touch count (the pad reports ~0-1535 on the Y axis).",
+          "maximum": 10,
+          "minimum": 0.001,
+          "type": "number"
+        }
+      },
+      "type": "object"
     },
     "Unset": {
       "const": "unset",
