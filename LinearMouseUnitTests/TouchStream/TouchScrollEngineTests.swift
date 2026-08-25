@@ -11,14 +11,16 @@ final class TouchScrollEngineTests: XCTestCase {
     private func makeEngine(
         pointsPerCount: Double = 0.25,
         invert: Bool = false,
-        axis: Configuration.TouchStream.Axis = .y,
-        acceleration: TouchScrollEngine.Config.Acceleration = .init()
+        axis: TouchStreamAxis = .y,
+        acceleration: TouchScrollEngine.Config.Acceleration = .init(),
+        momentum: TouchScrollEngine.Config.Momentum = .init()
     ) -> TouchScrollEngine {
         TouchScrollEngine(config: .init(
             pointsPerCount: pointsPerCount,
             invert: invert,
             axis: axis,
-            acceleration: acceleration
+            acceleration: acceleration,
+            momentum: momentum
         ))
     }
 
@@ -430,6 +432,44 @@ final class TouchScrollEngineTests: XCTestCase {
         _ = engine.momentumTick(at: liftTime + Self.tickInterval)
         XCTAssertEqual(engine.interrupt(), [.momentumEnded])
         XCTAssertFalse(engine.wantsMomentumTicks)
+    }
+
+    // MARK: - Momentum tuning
+
+    func testMomentumStartThresholdGatesMomentum() {
+        // The default flick coasts...
+        let defaultEngine = makeEngine()
+        _ = performFlick(on: defaultEngine)
+        XCTAssertTrue(defaultEngine.wantsMomentumTicks)
+
+        // ...but not when the configured threshold exceeds its lift-off speed.
+        let reluctant = makeEngine(momentum: .init(startThreshold: 100_000))
+        _ = performFlick(on: reluctant)
+        XCTAssertFalse(reluctant.wantsMomentumTicks)
+    }
+
+    func testMomentumMaxSpeedCapsSeedVelocity() {
+        let capped = makeEngine(momentum: .init(maxSpeed: 200))
+        let (_, liftTime) = performFlick(on: capped)
+        guard case let .momentumBegan(delta)? = drainMomentum(on: capped, from: liftTime).first else {
+            XCTFail("Expected momentum to begin")
+            return
+        }
+        // The first tick's delta cannot exceed maxSpeed * dt.
+        XCTAssertLessThanOrEqual(delta, 200 * Self.tickInterval + 1e-9)
+    }
+
+    func testMomentumDecayTimeConstantControlsCoastDuration() {
+        let short = makeEngine(momentum: .init(decayTimeConstant: 0.1))
+        let long = makeEngine(momentum: .init(decayTimeConstant: 1.5))
+
+        let (_, shortLift) = performFlick(on: short)
+        let (_, longLift) = performFlick(on: long)
+
+        let shortTicks = drainMomentum(on: short, from: shortLift).count
+        let longTicks = drainMomentum(on: long, from: longLift).count
+
+        XCTAssertGreaterThan(longTicks, shortTicks * 2)
     }
 }
 

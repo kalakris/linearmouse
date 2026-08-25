@@ -32,19 +32,25 @@ import Foundation
 final class TouchScrollEngine {
     struct Config: Equatable {
         /// Screen points of scroll per Cirque touch count.
-        var pointsPerCount = Configuration.TouchStream.defaultScale
+        var pointsPerCount = Scheme.Scrolling.TouchStream.defaultScale
 
         /// When false (default), a finger moving toward an increasing raw
         /// coordinate (on the selected axis) produces positive CGEvent deltaY
-        /// (scroll-up). Set to flip.
+        /// (scroll-up). Set to flip. Derived by the owner from the device's
+        /// self-reported orientation plus the user direction override (see
+        /// `TouchStreamCapabilities`).
         var invert = false
 
         /// The raw Cirque coordinate that feeds the position/velocity math.
-        var axis: Configuration.TouchStream.Axis = .y
+        /// Derived by the owner from the device's self-reported orientation.
+        var axis: TouchStreamAxis = .y
 
         /// Velocity-dependent gain ("ballistics"). Disabled by default, which
         /// preserves the plain linear counts → points mapping exactly.
         var acceleration = Acceleration()
+
+        /// Momentum (coasting) tuning.
+        var momentum = Momentum()
 
         var directionSign: Double {
             invert ? -1 : 1
@@ -60,10 +66,25 @@ final class TouchScrollEngine {
         /// identity (gain 1 everywhere).
         struct Acceleration: Equatable {
             var enabled = false
-            var exponent = Configuration.TouchStream.Acceleration.defaultExponent
-            var referenceSpeed = Configuration.TouchStream.Acceleration.defaultReferenceSpeed
-            var minGain = Configuration.TouchStream.Acceleration.defaultMinGain
-            var maxGain = Configuration.TouchStream.Acceleration.defaultMaxGain
+            var exponent = Scheme.Scrolling.TouchStream.Acceleration.defaultExponent
+            var referenceSpeed = Scheme.Scrolling.TouchStream.Acceleration.defaultReferenceSpeed
+            var minGain = Scheme.Scrolling.TouchStream.Acceleration.defaultMinGain
+            var maxGain = Scheme.Scrolling.TouchStream.Acceleration.defaultMaxGain
+        }
+
+        /// Momentum (coasting after lift-off) tuning, exposed through the
+        /// scheme's `scrolling.touchStream.momentum` configuration.
+        struct Momentum: Equatable {
+            /// Exponential decay time constant for the momentum velocity, in
+            /// seconds.
+            var decayTimeConstant = Scheme.Scrolling.TouchStream.Momentum.defaultDecayTimeConstant
+
+            /// Minimum measured lift-off speed (points/second) required to
+            /// start momentum at all.
+            var startThreshold = Scheme.Scrolling.TouchStream.Momentum.defaultStartThreshold
+
+            /// Safety cap for the momentum seed (points/second).
+            var maxSpeed = Scheme.Scrolling.TouchStream.Momentum.defaultMaxSpeed
         }
     }
 
@@ -88,18 +109,6 @@ final class TouchScrollEngine {
     /// momentum seed velocity. A finger that stops and then lifts therefore
     /// yields ~zero velocity and no momentum.
     private static let velocityWindow: TimeInterval = 0.1
-
-    /// Minimum measured lift-off speed (points/second) required to start
-    /// momentum at all.
-    private static let minMomentumVelocity = 100.0
-
-    /// Safety cap for the momentum seed (points/second).
-    private static let maxMomentumVelocity = 8000.0
-
-    /// Exponential decay time constant for momentum velocity. 0.83 s matches
-    /// a decay factor of ~0.99 per 120 Hz tick, close to the feel of the
-    /// smoothed scrolling engine's default momentum.
-    private static let decayTimeConstant: TimeInterval = 0.83
 
     /// Momentum ends once the decayed velocity drops below this (points/second).
     private static let stopVelocity = 10.0
@@ -279,9 +288,9 @@ final class TouchScrollEngine {
         // Do not trust x/y on the release report — only the flags matter.
         let velocity = liftOffVelocity()
 
-        if abs(velocity) >= Self.minMomentumVelocity {
+        if abs(velocity) >= config.momentum.startThreshold {
             state = .momentum
-            momentumVelocity = velocity.clamped(to: -Self.maxMomentumVelocity ... Self.maxMomentumVelocity)
+            momentumVelocity = velocity.clamped(to: -config.momentum.maxSpeed ... config.momentum.maxSpeed)
             momentumBegan = false
             lastMomentumTimestamp = frame.timestamp
             samples.removeAll(keepingCapacity: true)
@@ -338,7 +347,7 @@ final class TouchScrollEngine {
         let dt = (timestamp - lastMomentumTimestamp).clamped(to: 1.0 / 240.0 ... 1.0 / 24.0)
         lastMomentumTimestamp = timestamp
 
-        momentumVelocity *= exp(-dt / Self.decayTimeConstant)
+        momentumVelocity *= exp(-dt / config.momentum.decayTimeConstant)
 
         guard abs(momentumVelocity) > Self.stopVelocity else {
             let hadBegunMomentum = momentumBegan

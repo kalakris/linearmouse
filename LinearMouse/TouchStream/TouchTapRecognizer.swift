@@ -30,11 +30,11 @@ import Foundation
 final class TouchTapRecognizer {
     struct Config: Equatable {
         /// Maximum touch-down → lift-off duration for a tap.
-        var maxDuration: TimeInterval = Configuration.TouchStream.TapToClick.defaultMaxDurationMs / 1000
+        var maxDuration: TimeInterval = Scheme.Scrolling.TouchStream.TapToClick.defaultMaxDurationMs / 1000
 
         /// Maximum movement (max of |Δx|, |Δy| from the touch-down point) in
         /// raw Cirque counts.
-        var maxMovementCounts = Configuration.TouchStream.TapToClick.defaultMaxMovement
+        var maxMovementCounts = Scheme.Scrolling.TouchStream.TapToClick.defaultMaxMovement
     }
 
     /// A qualifying tap: the owner should post a left mouseDown + mouseUp at
