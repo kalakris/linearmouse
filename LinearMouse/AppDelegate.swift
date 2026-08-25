@@ -158,9 +158,14 @@ extension AppDelegate {
         DeviceManager.shared.start()
         BatteryDeviceMonitor.shared.enable()
         GlobalEventTap.shared.start()
+        // After GlobalEventTap so the event thread is available for posting.
+        TouchStreamManager.shared.start()
     }
 
     func stop() {
+        // Before GlobalEventTap so in-flight gestures can be closed out on
+        // the still-running event thread.
+        TouchStreamManager.shared.stop()
         BatteryDeviceMonitor.shared.disable()
         DeviceManager.shared.stop()
         GlobalEventTap.shared.stop()
