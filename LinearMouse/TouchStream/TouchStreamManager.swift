@@ -145,6 +145,13 @@ final class TouchStreamManager: ObservableObject {
     // MARK: - Lifecycle (main thread)
 
     func start() {
+        // Opening the HID manager on a keyboard's vendor collection can hit
+        // TCC (Input Monitoring / Accessibility prompts). Never do that from
+        // ephemeral test hosts — each `xcodebuild test` run would prompt anew.
+        guard ProcessEnvironment.isRunningApp else {
+            return
+        }
+
         guard !started else {
             return
         }
