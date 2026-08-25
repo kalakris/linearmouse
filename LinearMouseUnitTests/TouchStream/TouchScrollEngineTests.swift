@@ -24,18 +24,6 @@ final class TouchScrollEngineTests: XCTestCase {
         ))
     }
 
-    private func scrollFrame(y: Int, at timestamp: TimeInterval, pad: UInt8 = 0) -> TouchStreamFrame {
-        .init(padID: pad, x: 1000, y: y, z: 40, touched: true, scrollMode: true, timestamp: timestamp)
-    }
-
-    private func pointerFrame(y: Int, at timestamp: TimeInterval) -> TouchStreamFrame {
-        .init(x: 1000, y: y, z: 40, touched: true, scrollMode: false, timestamp: timestamp)
-    }
-
-    private func releaseFrame(at timestamp: TimeInterval, scrollMode: Bool = true) -> TouchStreamFrame {
-        .init(touched: false, scrollMode: scrollMode, timestamp: timestamp)
-    }
-
     /// Drives a fast steady drag and lift-off; returns (dragEvents, liftTime).
     private func performFlick(
         on engine: TouchScrollEngine,
@@ -53,7 +41,7 @@ final class TouchScrollEngineTests: XCTestCase {
         }
 
         timestamp += Self.frameInterval
-        events += engine.handle(frame: releaseFrame(at: timestamp))
+        events += engine.handle(frame: releaseFrame(at: timestamp, scrollMode: true))
         return (events, timestamp)
     }
 
@@ -142,7 +130,7 @@ final class TouchScrollEngineTests: XCTestCase {
 
         // ...then lift.
         timestamp += Self.frameInterval
-        events += engine.handle(frame: releaseFrame(at: timestamp))
+        events += engine.handle(frame: releaseFrame(at: timestamp, scrollMode: true))
 
         XCTAssertEqual(events.last, .touchEnded)
         XCTAssertFalse(engine.wantsMomentumTicks)

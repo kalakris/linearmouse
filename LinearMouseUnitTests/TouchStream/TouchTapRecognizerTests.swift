@@ -23,23 +23,6 @@ final class TouchTapRecognizerTests: XCTestCase {
         )
     }
 
-    private func pointerFrame(
-        x: Int = 1000,
-        y: Int = 500,
-        at timestamp: TimeInterval,
-        pad: UInt8 = 0
-    ) -> TouchStreamFrame {
-        .init(padID: pad, x: x, y: y, z: 40, touched: true, scrollMode: false, timestamp: timestamp)
-    }
-
-    private func scrollFrame(x: Int = 1000, y: Int = 500, at timestamp: TimeInterval) -> TouchStreamFrame {
-        .init(x: x, y: y, z: 40, touched: true, scrollMode: true, timestamp: timestamp)
-    }
-
-    private func releaseFrame(at timestamp: TimeInterval, scrollMode: Bool = false) -> TouchStreamFrame {
-        .init(touched: false, scrollMode: scrollMode, timestamp: timestamp)
-    }
-
     /// Feeds a whole touch-down → lift-off sequence of pointer-context frames
     /// and returns the tap recognized at lift-off, if any.
     @discardableResult
@@ -59,7 +42,7 @@ final class TouchTapRecognizerTests: XCTestCase {
         }
 
         timestamp += Self.frameInterval
-        return recognizer.handle(frame: releaseFrame(at: timestamp))
+        return recognizer.handle(frame: releaseFrame(at: timestamp, scrollMode: false))
     }
 
     // MARK: - Qualifying taps
@@ -105,7 +88,7 @@ final class TouchTapRecognizerTests: XCTestCase {
         // Returning near the start does not forgive the excursion.
         XCTAssertNil(recognizer.handle(frame: pointerFrame(y: 505, at: Self.frameInterval * 2)))
 
-        XCTAssertNil(recognizer.handle(frame: releaseFrame(at: Self.frameInterval * 3)))
+        XCTAssertNil(recognizer.handle(frame: releaseFrame(at: Self.frameInterval * 3, scrollMode: false)))
     }
 
     func testSequenceContainingScrollModeFramesNeverClicks() {
@@ -115,14 +98,14 @@ final class TouchTapRecognizerTests: XCTestCase {
         // coasting scroll. Short and stationary, but it must never click.
         XCTAssertNil(recognizer.handle(frame: scrollFrame(at: 0)))
         XCTAssertNil(recognizer.handle(frame: scrollFrame(at: Self.frameInterval)))
-        XCTAssertNil(recognizer.handle(frame: releaseFrame(at: Self.frameInterval * 2)))
+        XCTAssertNil(recognizer.handle(frame: releaseFrame(at: Self.frameInterval * 2, scrollMode: false)))
 
         // Even a single scroll-mode frame in an otherwise pointer-context
         // touch disqualifies the whole sequence.
         XCTAssertNil(recognizer.handle(frame: pointerFrame(at: 1.0)))
         XCTAssertNil(recognizer.handle(frame: scrollFrame(at: 1.0 + Self.frameInterval)))
         XCTAssertNil(recognizer.handle(frame: pointerFrame(at: 1.0 + Self.frameInterval * 2)))
-        XCTAssertNil(recognizer.handle(frame: releaseFrame(at: 1.0 + Self.frameInterval * 3)))
+        XCTAssertNil(recognizer.handle(frame: releaseFrame(at: 1.0 + Self.frameInterval * 3, scrollMode: false)))
     }
 
     func testScrollModeOnReleaseFrameDisqualifies() {
@@ -141,14 +124,14 @@ final class TouchTapRecognizerTests: XCTestCase {
 
     func testStrayReleaseWithoutTouchDoesNothing() {
         let recognizer = makeRecognizer()
-        XCTAssertNil(recognizer.handle(frame: releaseFrame(at: 0)))
+        XCTAssertNil(recognizer.handle(frame: releaseFrame(at: 0, scrollMode: false)))
     }
 
     func testResetDropsTouchInProgress() {
         let recognizer = makeRecognizer()
         XCTAssertNil(recognizer.handle(frame: pointerFrame(at: 0)))
         recognizer.reset()
-        XCTAssertNil(recognizer.handle(frame: releaseFrame(at: Self.frameInterval)))
+        XCTAssertNil(recognizer.handle(frame: releaseFrame(at: Self.frameInterval, scrollMode: false)))
     }
 
     // MARK: - Multi-click chains
