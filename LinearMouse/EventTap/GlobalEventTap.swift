@@ -128,7 +128,12 @@ class GlobalEventTap {
         }
 
         os_log("Restart GlobalEventTap: %{public}@", log: Self.log, type: .info, String(describing: reason))
+        // The touch-stream HID manager is scheduled on the event thread's run
+        // loop; restart it around the thread teardown so it is never left on
+        // a dead run loop (mirrors AppDelegate.start/stop ordering).
+        TouchStreamManager.shared.stop()
         stopObservation()
         startObservation()
+        TouchStreamManager.shared.start()
     }
 }

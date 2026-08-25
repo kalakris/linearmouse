@@ -17,9 +17,11 @@ import os.log
 ///
 /// Lifecycle:
 /// - `start()` opens an `IOHIDManager` matching the vendor collection (by
-///   VID/PID + usage pair) on the main run loop. It survives device
-///   connect/disconnect (BLE and USB) and is a complete no-op while the
-///   device is absent.
+///   VID/PID + usage pair) on the event thread's run loop. It survives
+///   device connect/disconnect (BLE and USB) and is a complete no-op while
+///   the device is absent. `GlobalEventTap` restarts the manager around
+///   event-thread restarts so it is never left scheduled on a dead run
+///   loop.
 /// - On device connect the feature report is read once. Devices without a
 ///   supported feature report are ignored entirely (non-streaming).
 /// - The touch-stream configuration lives on the per-device scheme
@@ -31,10 +33,14 @@ import os.log
 ///   scheme only carries a natural/inverted override.
 ///
 /// Data flow and threading:
-/// - The input-report callback parses each report into a `TouchStreamFrame`
-///   (dropping malformed/short reports) and hops to `EventThread`, where all
-///   engine/poster state lives — the same thread `SmoothedScrollingTransformer`
-///   uses for synthetic event posting.
+/// - The `IOHIDManager` is scheduled on `EventThread`'s run loop, so the
+///   ~100 Hz input-report callback parses each report into a
+///   `TouchStreamFrame` (dropping malformed/short reports) directly on the
+///   thread where all engine/poster state lives — the same thread
+///   `SmoothedScrollingTransformer` uses for synthetic event posting — with
+///   no per-frame thread hop. Device connect/disconnect callbacks fire on
+///   that thread too and are rare, so they hop to the main thread, where
+///   the device list, the published identities, and scheme resolution live.
 /// - `TouchScrollEngine` maps frames to gesture events; during momentum an
 ///   `EventThreadTimer` at 120 Hz drives the decay. `TouchStreamScrollPoster`
 ///   turns engine events into phased CGEvents posted to the session event tap.
@@ -76,6 +82,9 @@ final class TouchStreamManager: ObservableObject {
     // Main-thread state.
     private var started = false
     private var hidManager: IOHIDManager?
+    /// The run loop `hidManager` is scheduled on (the event thread's, or the
+    /// main one as a degenerate fallback when the event thread is down).
+    private var hidManagerRunLoop: CFRunLoop?
     private var subscriptions = Set<AnyCancellable>()
     private var streamDevices: [StreamDevice] = []
 
@@ -325,20 +334,28 @@ final class TouchStreamManager: ObservableObject {
         ]
         IOHIDManagerSetDeviceMatching(manager, matching as CFDictionary)
 
+        // Connect/disconnect handling touches main-thread state (the device
+        // list, the @Published identities, scheme resolution), so those rare
+        // callbacks hop to the main thread. Input reports (~100 Hz) are
+        // consumed on the scheduling thread itself — see `handleReport`.
         let context = Unmanaged.passUnretained(self).toOpaque()
         IOHIDManagerRegisterDeviceMatchingCallback(manager, { context, _, _, device in
             guard let context else {
                 return
             }
             let manager = Unmanaged<TouchStreamManager>.fromOpaque(context).takeUnretainedValue()
-            manager.deviceDidConnect(device)
+            DispatchQueue.main.async {
+                manager.deviceDidConnect(device)
+            }
         }, context)
         IOHIDManagerRegisterDeviceRemovalCallback(manager, { context, _, _, device in
             guard let context else {
                 return
             }
             let manager = Unmanaged<TouchStreamManager>.fromOpaque(context).takeUnretainedValue()
-            manager.deviceDidDisconnect(device)
+            DispatchQueue.main.async {
+                manager.deviceDidDisconnect(device)
+            }
         }, context)
         IOHIDManagerRegisterInputReportCallback(manager, { context, result, _, type, reportID, report, reportLength in
             guard let context, result == kIOReturnSuccess, type == kIOHIDReportTypeInput else {
@@ -348,7 +365,15 @@ final class TouchStreamManager: ObservableObject {
             manager.handleReport(reportID: reportID, bytes: report, length: reportLength)
         }, context)
 
-        IOHIDManagerScheduleWithRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
+        // Schedule on the event thread's run loop so input reports arrive
+        // directly on the thread that consumes them — no per-report hop, no
+        // main-thread wakeups. The main run loop is a degenerate fallback for
+        // the case where the event thread is not running (e.g. accessibility
+        // permission missing — no synthetic events can be posted then
+        // anyway); `handleReport` handles both.
+        let runLoop: CFRunLoop = EventThread.shared.runLoop?.getCFRunLoop() ?? CFRunLoopGetMain()
+        hidManagerRunLoop = runLoop
+        IOHIDManagerScheduleWithRunLoop(manager, runLoop, CFRunLoopMode.commonModes.rawValue)
 
         // An open failure (e.g. missing input-monitoring approval) leaves the
         // manager harmlessly idle; matching may also simply produce no devices
@@ -375,7 +400,10 @@ final class TouchStreamManager: ObservableObject {
         IOHIDManagerRegisterInputReportCallback(manager, nil, nil)
         IOHIDManagerRegisterDeviceMatchingCallback(manager, nil, nil)
         IOHIDManagerRegisterDeviceRemovalCallback(manager, nil, nil)
-        IOHIDManagerUnscheduleFromRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
+        if let runLoop = hidManagerRunLoop {
+            IOHIDManagerUnscheduleFromRunLoop(manager, runLoop, CFRunLoopMode.commonModes.rawValue)
+        }
+        hidManagerRunLoop = nil
         IOHIDManagerClose(manager, IOOptionBits(kIOHIDOptionsTypeNone))
     }
 
@@ -474,7 +502,8 @@ final class TouchStreamManager: ObservableObject {
 
     // MARK: - Report handling
 
-    /// Called on the main run loop by the HID input-report callback.
+    /// Called by the HID input-report callback on the run loop the manager
+    /// is scheduled on — normally the event thread itself.
     private func handleReport(reportID: UInt32, bytes: UnsafeMutablePointer<UInt8>, length: CFIndex) {
         // Only touch frames (report ID 0x04) are ours. Depending on transport
         // and collection splitting — over BLE in particular — macOS can
@@ -504,8 +533,14 @@ final class TouchStreamManager: ObservableObject {
             return
         }
 
-        EventThread.shared.perform { [weak self] in
-            self?.process(frame: frame)
+        if EventThread.shared.isCurrent {
+            process(frame: frame)
+        } else {
+            // Degenerate fallback scheduling only (see
+            // `openHIDManagerIfNeeded`).
+            EventThread.shared.perform { [weak self] in
+                self?.process(frame: frame)
+            }
         }
     }
 
