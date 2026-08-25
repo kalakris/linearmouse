@@ -157,8 +157,7 @@ final class TouchStreamManager: ObservableObject {
         }
         started = true
 
-        ConfigurationState.shared.$configuration
-            .removeDuplicates()
+        Self.configurationChanges(ConfigurationState.shared.$configuration)
             .sink { [weak self] _ in
                 self?.reconfigure()
             }
@@ -190,6 +189,25 @@ final class TouchStreamManager: ObservableObject {
     }
 
     // MARK: - Configuration (main thread)
+
+    /// Configuration changes, delivered only after the new value is committed.
+    ///
+    /// `@Published` publishes from `willSet`, so a synchronous sink runs while
+    /// `ConfigurationState.shared.configuration` still holds the *previous*
+    /// value. `reconfigure()` reads the stored configuration (not the emitted
+    /// one), so a synchronous subscription would push an engine config one
+    /// change behind — e.g. the reverse-scrolling toggle inverting the
+    /// direction one toggle late. Deferring delivery to the next main-queue
+    /// turn (the same idiom `Device`'s configuration observer uses) makes the
+    /// read see the committed value. Internal for unit testing.
+    static func configurationChanges(
+        _ configuration: Published<Configuration>.Publisher
+    ) -> AnyPublisher<Configuration, Never> {
+        configuration
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .eraseToAnyPublisher()
+    }
 
     /// Recomputes the engine configuration from the connected device's
     /// capabilities and its per-device scheme, and pushes it to the event
