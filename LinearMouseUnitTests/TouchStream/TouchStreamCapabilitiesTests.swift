@@ -110,15 +110,16 @@ final class TouchStreamCapabilitiesTests: XCTestCase {
 
         XCTAssertEqual(capabilities.scrollAxis, .x)
         XCTAssertFalse(capabilities.naturalScrollInverted)
-        XCTAssertFalse(capabilities.scrollInverted(for: .natural))
-        XCTAssertTrue(capabilities.scrollInverted(for: .inverted))
+        XCTAssertFalse(capabilities.scrollInverted(reversed: false))
+        XCTAssertTrue(capabilities.scrollInverted(reversed: true))
     }
 
     /// End-to-end anchor: an engine configured from the Go60 capabilities
-    /// must produce the exact deltas of the validated prototype
-    /// configuration `{axis: "x", invert: false, scale: 0.25}` — a finger
-    /// moving toward increasing raw X produces positive (scroll-up) deltas
-    /// scaled by pointsPerCount, and raw Y movement is ignored.
+    /// with `scrolling.reverse` unset must produce the exact deltas of the
+    /// validated prototype configuration `{axis: "x", invert: false,
+    /// scale: 0.25}` — a finger moving toward increasing raw X produces
+    /// positive (scroll-up) deltas scaled by pointsPerCount, and raw Y
+    /// movement is ignored.
     func testGo60OrientationAnchorDrivesEngineLikeTheValidatedConfig() {
         guard let capabilities = TouchStreamCapabilities.parse(reportBytes: Self.go60Report) else {
             XCTFail("Expected the Go60 feature report to parse")
@@ -127,7 +128,7 @@ final class TouchStreamCapabilitiesTests: XCTestCase {
 
         let engine = TouchScrollEngine(config: .init(
             pointsPerCount: 0.25,
-            invert: capabilities.scrollInverted(for: .natural),
+            invert: capabilities.scrollInverted(reversed: false),
             axis: capabilities.scrollAxis
         ))
 
@@ -138,7 +139,10 @@ final class TouchStreamCapabilitiesTests: XCTestCase {
         XCTAssertEqual(events, [.touchChanged(deltaY: 7.5)])
     }
 
-    func testDirectionOverrideFlipsTheAnchorBehavior() {
+    /// The generic "Reverse scrolling" toggle (`scrolling.reverse.vertical`)
+    /// is the one and only direction control: with it set, the same finger
+    /// motion produces the exactly negated deltas of the natural anchor.
+    func testReverseScrollingFlipsTheAnchorBehavior() {
         guard let capabilities = TouchStreamCapabilities.parse(reportBytes: Self.go60Report) else {
             XCTFail("Expected the Go60 feature report to parse")
             return
@@ -146,7 +150,7 @@ final class TouchStreamCapabilitiesTests: XCTestCase {
 
         let engine = TouchScrollEngine(config: .init(
             pointsPerCount: 0.25,
-            invert: capabilities.scrollInverted(for: .inverted),
+            invert: capabilities.scrollInverted(reversed: true),
             axis: capabilities.scrollAxis
         ))
 

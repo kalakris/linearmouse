@@ -136,9 +136,13 @@ extension TouchStreamCapabilities {
         !invertY
     }
 
-    /// The engine `invert` flag after applying the user-facing direction
-    /// override on top of the orientation-derived natural direction.
-    func scrollInverted(for direction: Scheme.Scrolling.TouchStream.Direction) -> Bool {
-        naturalScrollInverted != (direction == .inverted)
+    /// The engine `invert` flag after applying the scheme's generic
+    /// `scrolling.reverse` (vertical) toggle on top of the
+    /// orientation-derived natural direction. This is the single point where
+    /// the user's reverse preference enters the touch-stream pipeline — the
+    /// event-tap `ReverseScrollingTransformer` skips LinearMouse's synthetic
+    /// events, so the flip is never applied twice.
+    func scrollInverted(reversed: Bool) -> Bool {
+        naturalScrollInverted != reversed
     }
 }

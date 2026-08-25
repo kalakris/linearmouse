@@ -13,22 +13,19 @@ extension Scheme.Scrolling {
     ///
     /// Streaming devices self-describe through a feature report
     /// (`TouchStreamCapabilities`): the pad's mounting orientation determines
-    /// the scroll axis and default direction automatically, so the only
-    /// direction control left here is a user-facing natural/inverted override.
+    /// the scroll axis and default direction automatically. There is no
+    /// direction key here at all — the scheme's generic `scrolling.reverse`
+    /// (vertical) toggle flips the orientation-derived natural direction,
+    /// exactly like it does for every other scrolling mode. The flip is
+    /// applied once, at the source, as the engine's output sign; the
+    /// event-tap `ReverseScrollingTransformer` deliberately skips
+    /// LinearMouse's own synthetic events.
     ///
     /// The device that this configuration applies to is the pointer device of
     /// the same keyboard (same vendor/product ID as the vendor HID
     /// collection), which is how the configuration participates in per-device
     /// scheme matching and merging like every other scrolling setting.
     struct TouchStream: Codable, Equatable, ImplicitInitable {
-        /// User-facing scroll direction override, applied on top of the
-        /// orientation-derived default. `natural` (the default) exactly
-        /// reproduces the pad's validated native behavior.
-        enum Direction: String, Codable {
-            case natural
-            case inverted
-        }
-
         /// Whether touch-stream scrolling is active. Defaults to `true` when
         /// the `touchStream` object is present; the feature is entirely off
         /// when the object is absent.
@@ -36,10 +33,6 @@ extension Scheme.Scrolling {
 
         /// Scroll scale in screen points per Cirque touch count.
         var scale: Decimal?
-
-        /// Scroll direction override. `natural` preserves the
-        /// orientation-derived default direction; `inverted` flips it.
-        var direction: Direction?
 
         /// Velocity-dependent scroll gain ("ballistics"). Absent = off.
         var acceleration: Acceleration?
@@ -64,6 +57,12 @@ extension Scheme.Scrolling {
             /// Whether the velocity-dependent gain is active. Like
             /// `tapToClick.enabled`, this defaults to `false` even when the
             /// `acceleration` object is present.
+            ///
+            /// The UI exposes a single "Scroll acceleration" slider bound to
+            /// `exponent`; writing an exponent > 0 also sets
+            /// `enabled = true`, and writing exponent 0 sets
+            /// `enabled = false` (exponent 0 is the identity curve anyway,
+            /// so both spellings behave identically flat).
             var enabled: Bool?
 
             /// Exponent of the gain curve. 0 is the identity; 0.5 doubles
@@ -149,14 +148,12 @@ extension Scheme.Scrolling {
         init(
             enabled: Bool? = nil,
             scale: Decimal? = nil,
-            direction: Direction? = nil,
             acceleration: Acceleration? = nil,
             momentum: Momentum? = nil,
             tapToClick: TapToClick? = nil
         ) {
             self.enabled = enabled
             self.scale = scale
-            self.direction = direction
             self.acceleration = acceleration
             self.momentum = momentum
             self.tapToClick = tapToClick
@@ -176,10 +173,6 @@ extension Scheme.Scrolling.TouchStream {
         (scale?.asTruncatedDouble ?? Self.defaultScale).clamped(to: Self.scaleRange)
     }
 
-    var resolvedDirection: Direction {
-        direction ?? .natural
-    }
-
     var isTapToClickEnabled: Bool {
         tapToClick?.isEnabled ?? false
     }
@@ -191,10 +184,6 @@ extension Scheme.Scrolling.TouchStream {
 
         if let scale {
             touchStream.scale = scale
-        }
-
-        if let direction {
-            touchStream.direction = direction
         }
 
         if let acceleration {

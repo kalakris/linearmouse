@@ -130,10 +130,13 @@ HID collection shares the same vendor/product ID, so ordinary device matching an
 
 On connect, LinearMouse reads a capability feature report from the device (protocol version, pads
 present, resolution in counts/mm, pad orientation, and coordinate ranges). Devices without a
-supported feature report are treated as non-streaming and ignored. The scroll axis and default
+supported feature report are treated as non-streaming and ignored. The scroll axis and natural
 scroll direction are derived automatically from the self-reported pad orientation, so the old
-manual `axis`/`invert` keys are gone; use `direction` (`"natural"`, the default, or `"inverted"`)
-to flip the direction.
+manual `axis`/`invert` keys are gone — and so is the interim `touchStream.direction` key. To flip
+the direction, use the scheme's generic `scrolling.reverse` (vertical) toggle, which works in
+Raw Touch mode exactly like in every other scrolling mode. The flip is applied exactly once, at
+the source (the synthesizer's output sign); LinearMouse's reverse event transformer deliberately
+skips its own synthetic events.
 
 While the streaming collection is connected and `touchStream` is enabled for the device's scheme,
 LinearMouse also drops that device's ordinary scroll-wheel events: the firmware emits them as a
@@ -144,13 +147,16 @@ disconnects or the feature is disabled.
 - `scale` (0.001–10, default 0.25) — scroll scale in screen points per Cirque touch count. The
   pad self-reports its resolution (≈38 counts/mm), but `scale` deliberately stays in
   points-per-count; multiply by the resolution if you prefer to think in points per millimeter.
-- `direction` — `"natural"` (default) or `"inverted"`.
-- `acceleration` — velocity-dependent gain ("ballistics"): `enabled` (default `false`),
-  `exponent` (0–2, default 0.5), `referenceSpeed` (counts/s at which gain is exactly 1, default
-  800), `minGain` (default 0.4), and `maxGain` (default 3).
-- `momentum` — coasting after lift-off: `decayTimeConstant` (seconds, default 0.83),
-  `startThreshold` (minimum lift-off speed in points/s to coast at all, default 100), and
-  `maxSpeed` (cap on the seed velocity in points/s, default 8000).
+- `acceleration` — velocity-dependent gain ("ballistics"): `enabled` (default `false`) and
+  `exponent` (0–2, default 0.5). The UI exposes a single acceleration slider bound to
+  `exponent`: writing an exponent > 0 also sets `enabled` to `true`, and writing 0 sets it to
+  `false` (exponent 0 is the identity curve anyway, so both spellings are equally flat).
+  Advanced, JSON-only: `referenceSpeed` (counts/s at which gain is exactly 1, default 800),
+  `minGain` (default 0.4), and `maxGain` (default 3).
+- `momentum` — coasting after lift-off: `decayTimeConstant` (seconds, default 0.83; the UI's
+  "Scroll inertia" slider). Advanced, JSON-only: `startThreshold` (minimum lift-off speed in
+  points/s to coast at all, default 100) and `maxSpeed` (cap on the seed velocity in points/s,
+  default 8000).
 - `tapToClick` — **deprecated**. Host-side tap-to-click for pointer-context touches. The firmware
   now implements tap-to-click itself, so leave this off (the default) unless running older
   firmware — otherwise taps double-click.
@@ -169,21 +175,18 @@ other scrolling settings there are no `vertical`/`horizontal` variants.
         }
       },
       "scrolling": {
+        "reverse": {
+          "vertical": false
+        },
         "touchStream": {
           "enabled": true,
           "scale": 0.6,
-          "direction": "natural",
           "acceleration": {
             "enabled": true,
-            "exponent": 0.5,
-            "referenceSpeed": 800,
-            "minGain": 0.4,
-            "maxGain": 3.0
+            "exponent": 0.5
           },
           "momentum": {
-            "decayTimeConstant": 0.83,
-            "startThreshold": 100,
-            "maxSpeed": 8000
+            "decayTimeConstant": 0.83
           }
         }
       }

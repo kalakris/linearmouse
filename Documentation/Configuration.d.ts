@@ -217,7 +217,7 @@ declare namespace Scheme {
 
     /**
      * @title Touch-stream scrolling
-     * @description Consumes absolute touch frames streamed over a vendor-defined HID report by a supported keyboard trackpad (MoErgo Go60) and synthesizes trackpad-style scrolling with gesture phases and momentum. Applies when the scheme matches the keyboard's pointer device (same vendor/product ID as the streaming HID collection). The scroll axis and default direction are derived automatically from the pad orientation self-reported in the device's capability feature report; `direction` optionally flips it. Touch-stream settings are direction-agnostic (not Bidirectional). The feature is entirely off when this key is absent.
+     * @description Consumes absolute touch frames streamed over a vendor-defined HID report by a supported keyboard trackpad (MoErgo Go60) and synthesizes trackpad-style scrolling with gesture phases and momentum. Applies when the scheme matches the keyboard's pointer device (same vendor/product ID as the streaming HID collection). The scroll axis and natural direction are derived automatically from the pad orientation self-reported in the device's capability feature report; the scheme's generic `scrolling.reverse` (vertical) toggle flips it, applied exactly once at the source. Touch-stream settings are otherwise direction-agnostic (not Bidirectional). The feature is entirely off when this key is absent.
      */
     touchStream?: Scrolling.TouchStream;
   };
@@ -428,12 +428,6 @@ declare namespace Scheme {
       scale?: number;
 
       /**
-       * @description Scroll direction override. "natural" (the default) preserves the pad's native direction as derived from its self-reported orientation; "inverted" flips it. Replaces the removed manual `axis`/`invert` keys, which are now derived from the device's capability feature report.
-       * @default "natural"
-       */
-      direction?: "natural" | "inverted";
-
-      /**
        * @title Acceleration
        * @description Velocity-dependent scroll gain ("ballistics"), mimicking Apple trackpad feel: slow drags scroll with sub-linear precision, fast flicks travel super-linearly. Each frame's delta is multiplied by clamp((smoothedSpeed / referenceSpeed) ^ exponent, minGain, maxGain), where smoothedSpeed is the lightly smoothed finger speed in raw Cirque counts per second. Momentum after a flick is seeded from the boosted output velocity.
        */
@@ -455,7 +449,7 @@ declare namespace Scheme {
     namespace TouchStream {
       type Acceleration = {
         /**
-         * @description Whether the velocity-dependent gain is active. Unlike the parent touchStream.enabled, this defaults to false even when the acceleration object is present; when off, scrolling is exactly linear.
+         * @description Whether the velocity-dependent gain is active. Unlike the parent touchStream.enabled, this defaults to false even when the acceleration object is present; when off, scrolling is exactly linear. The UI exposes a single acceleration slider bound to exponent: writing an exponent > 0 also sets enabled to true, and writing exponent 0 sets enabled to false (exponent 0 is the identity curve anyway, so both spellings are equally flat).
          * @default false
          */
         enabled?: boolean;
@@ -469,7 +463,7 @@ declare namespace Scheme {
         exponent?: number;
 
         /**
-         * @description Finger speed, in raw Cirque counts per second, at which the gain is exactly 1. The pad reports ~38 counts/mm, so the default 800 counts/s is about 2 cm/s of finger motion.
+         * @description Advanced (JSON-only). Finger speed, in raw Cirque counts per second, at which the gain is exactly 1. The pad reports ~38 counts/mm, so the default 800 counts/s is about 2 cm/s of finger motion.
          * @minimum 50
          * @maximum 20000
          * @default 800
@@ -477,7 +471,7 @@ declare namespace Scheme {
         referenceSpeed?: number;
 
         /**
-         * @description Lower clamp on the gain, applied to slow precise motion.
+         * @description Advanced (JSON-only). Lower clamp on the gain, applied to slow precise motion.
          * @minimum 0.05
          * @maximum 1
          * @default 0.4
@@ -485,7 +479,7 @@ declare namespace Scheme {
         minGain?: number;
 
         /**
-         * @description Upper clamp on the gain, applied to fast flicks.
+         * @description Advanced (JSON-only). Upper clamp on the gain, applied to fast flicks.
          * @minimum 1
          * @maximum 20
          * @default 3
@@ -503,7 +497,7 @@ declare namespace Scheme {
         decayTimeConstant?: number;
 
         /**
-         * @description Minimum lift-off speed, in scroll points per second, required to enter momentum at all. Raise it to make coasting harder to trigger.
+         * @description Advanced (JSON-only). Minimum lift-off speed, in scroll points per second, required to enter momentum at all. Raise it to make coasting harder to trigger.
          * @minimum 0
          * @maximum 5000
          * @default 100
@@ -511,7 +505,7 @@ declare namespace Scheme {
         startThreshold?: number;
 
         /**
-         * @description Safety cap on the momentum seed velocity, in scroll points per second.
+         * @description Advanced (JSON-only). Safety cap on the momentum seed velocity, in scroll points per second.
          * @minimum 100
          * @maximum 50000
          * @default 8000

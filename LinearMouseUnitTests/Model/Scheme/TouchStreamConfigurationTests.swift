@@ -15,7 +15,6 @@ final class TouchStreamConfigurationTests: XCTestCase {
                         "touchStream": {
                             "enabled": true,
                             "scale": 0.6,
-                            "direction": "natural",
                             "acceleration": {
                                 "enabled": true,
                                 "exponent": 0.5,
@@ -38,7 +37,6 @@ final class TouchStreamConfigurationTests: XCTestCase {
         let touchStream = try XCTUnwrap(configuration.schemes.first?.scrolling.$touchStream)
         XCTAssertTrue(touchStream.isEnabled)
         XCTAssertEqual(touchStream.resolvedScale, 0.6)
-        XCTAssertEqual(touchStream.resolvedDirection, .natural)
         XCTAssertEqual(touchStream.acceleration?.isEnabled, true)
         XCTAssertEqual(touchStream.acceleration?.resolvedExponent, 0.5)
         XCTAssertEqual(touchStream.acceleration?.resolvedReferenceSpeed, 800)
@@ -69,15 +67,16 @@ final class TouchStreamConfigurationTests: XCTestCase {
     }
 
     /// The removed `axis`/`invert` keys (superseded by feature-report
-    /// auto-configuration) are unknown keys inside the scheme-scoped object
-    /// and must be ignored as well.
-    func testIgnoresRemovedAxisAndInvertKeys() throws {
+    /// auto-configuration) and the removed `direction` key (superseded by
+    /// the scheme's generic `scrolling.reverse` toggle) are unknown keys
+    /// inside the scheme-scoped object and must be ignored as well.
+    func testIgnoresRemovedAxisInvertAndDirectionKeys() throws {
         let configuration = try Configuration.load(from: """
         {
             "schemes": [
                 {
                     "scrolling": {
-                        "touchStream": { "scale": 0.5, "axis": "x", "invert": true }
+                        "touchStream": { "scale": 0.5, "axis": "x", "invert": true, "direction": "inverted" }
                     }
                 }
             ]
@@ -86,14 +85,16 @@ final class TouchStreamConfigurationTests: XCTestCase {
 
         let touchStream = try XCTUnwrap(configuration.schemes.first?.scrolling.$touchStream)
         XCTAssertEqual(touchStream.resolvedScale, 0.5)
-        XCTAssertEqual(touchStream.resolvedDirection, .natural)
+
+        // The legacy key must not survive a round-trip either.
+        let dumped = try XCTUnwrap(String(data: configuration.dump(), encoding: .utf8))
+        XCTAssertFalse(dumped.contains("direction"))
     }
 
     func testDefaults() {
         let touchStream = Scheme.Scrolling.TouchStream()
         XCTAssertTrue(touchStream.isEnabled)
         XCTAssertEqual(touchStream.resolvedScale, 0.25)
-        XCTAssertEqual(touchStream.resolvedDirection, .natural)
         XCTAssertFalse(touchStream.isTapToClickEnabled)
 
         let momentum = Scheme.Scrolling.TouchStream.Momentum()
@@ -152,14 +153,12 @@ final class TouchStreamConfigurationTests: XCTestCase {
             acceleration: .init(enabled: true, exponent: 0.5)
         )
         let overlay = Scheme.Scrolling.TouchStream(
-            direction: .inverted,
             acceleration: .init(minGain: 0.2)
         )
 
         overlay.merge(into: &base)
 
         XCTAssertEqual(base.scale, 0.6)
-        XCTAssertEqual(base.direction, .inverted)
         XCTAssertEqual(base.acceleration?.enabled, true)
         XCTAssertEqual(base.acceleration?.exponent, 0.5)
         XCTAssertEqual(base.acceleration?.minGain, 0.2)
@@ -171,7 +170,7 @@ final class TouchStreamConfigurationTests: XCTestCase {
             "schemes": [
                 {
                     "scrolling": {
-                        "touchStream": { "scale": 0.6, "direction": "inverted" }
+                        "touchStream": { "scale": 0.6, "momentum": { "decayTimeConstant": 1.2 } }
                     }
                 }
             ]

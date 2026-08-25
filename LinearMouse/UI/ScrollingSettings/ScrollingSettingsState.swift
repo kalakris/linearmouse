@@ -558,24 +558,6 @@ extension ScrollingSettingsState {
         decimalFormatter(maxFractionDigits: 3)
     }
 
-    var touchStreamInverted: Bool {
-        get { currentTouchStreamConfiguration?.resolvedDirection == .inverted }
-        set {
-            updateTouchStreamConfiguration {
-                $0.direction = newValue ? .inverted : .natural
-            }
-        }
-    }
-
-    var touchStreamAccelerationEnabled: Bool {
-        get { currentTouchStreamConfiguration?.acceleration?.isEnabled ?? false }
-        set {
-            updateTouchStreamAcceleration {
-                $0.enabled = newValue
-            }
-        }
-    }
-
     private func updateTouchStreamAcceleration(
         _ update: (inout Scheme.Scrolling.TouchStream.Acceleration) -> Void
     ) {
@@ -586,63 +568,29 @@ extension ScrollingSettingsState {
         }
     }
 
+    /// The single acceleration control: the gain-curve exponent, with 0
+    /// meaning "acceleration off". Reads as 0 while acceleration is
+    /// disabled; writing a positive exponent enables acceleration and
+    /// writing 0 disables it (the coherent-config rule — exponent 0 is the
+    /// identity curve anyway). `referenceSpeed`/`minGain`/`maxGain` are
+    /// JSON-only expert settings.
     var touchStreamAccelerationExponent: Double {
         get {
-            (currentTouchStreamConfiguration?.acceleration ?? .init()).resolvedExponent
+            guard let acceleration = currentTouchStreamConfiguration?.acceleration,
+                  acceleration.isEnabled else {
+                return 0
+            }
+            return acceleration.resolvedExponent
         }
         set {
             updateTouchStreamAcceleration {
                 $0.exponent = Decimal(newValue).rounded(2)
+                $0.enabled = newValue > 0
             }
         }
     }
 
     var touchStreamAccelerationExponentFormatter: NumberFormatter {
-        decimalFormatter(maxFractionDigits: 2)
-    }
-
-    var touchStreamAccelerationReferenceSpeed: Double {
-        get {
-            (currentTouchStreamConfiguration?.acceleration ?? .init()).resolvedReferenceSpeed
-        }
-        set {
-            updateTouchStreamAcceleration {
-                $0.referenceSpeed = Decimal(newValue).rounded(0)
-            }
-        }
-    }
-
-    var touchStreamAccelerationReferenceSpeedFormatter: NumberFormatter {
-        decimalFormatter(maxFractionDigits: 0)
-    }
-
-    var touchStreamAccelerationMinGain: Double {
-        get {
-            (currentTouchStreamConfiguration?.acceleration ?? .init()).resolvedMinGain
-        }
-        set {
-            updateTouchStreamAcceleration {
-                $0.minGain = Decimal(newValue).rounded(2)
-            }
-        }
-    }
-
-    var touchStreamAccelerationMinGainFormatter: NumberFormatter {
-        decimalFormatter(maxFractionDigits: 2)
-    }
-
-    var touchStreamAccelerationMaxGain: Double {
-        get {
-            (currentTouchStreamConfiguration?.acceleration ?? .init()).resolvedMaxGain
-        }
-        set {
-            updateTouchStreamAcceleration {
-                $0.maxGain = Decimal(newValue).rounded(2)
-            }
-        }
-    }
-
-    var touchStreamAccelerationMaxGainFormatter: NumberFormatter {
         decimalFormatter(maxFractionDigits: 2)
     }
 
@@ -669,35 +617,5 @@ extension ScrollingSettingsState {
 
     var touchStreamMomentumDecayTimeConstantFormatter: NumberFormatter {
         decimalFormatter(maxFractionDigits: 2)
-    }
-
-    var touchStreamMomentumStartThreshold: Double {
-        get {
-            (currentTouchStreamConfiguration?.momentum ?? .init()).resolvedStartThreshold
-        }
-        set {
-            updateTouchStreamMomentum {
-                $0.startThreshold = Decimal(newValue).rounded(0)
-            }
-        }
-    }
-
-    var touchStreamMomentumStartThresholdFormatter: NumberFormatter {
-        decimalFormatter(maxFractionDigits: 0)
-    }
-
-    var touchStreamMomentumMaxSpeed: Double {
-        get {
-            (currentTouchStreamConfiguration?.momentum ?? .init()).resolvedMaxSpeed
-        }
-        set {
-            updateTouchStreamMomentum {
-                $0.maxSpeed = Decimal(newValue).rounded(0)
-            }
-        }
-    }
-
-    var touchStreamMomentumMaxSpeedFormatter: NumberFormatter {
-        decimalFormatter(maxFractionDigits: 0)
     }
 }

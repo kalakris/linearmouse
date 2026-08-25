@@ -30,7 +30,9 @@ import os.log
 ///   (`HIDPhysicalDeviceIdentity`) rather than vendor/product ID, because
 ///   multiple ZMK keyboards can share the same VID/PID. The scroll axis and
 ///   default direction come from the device's self-reported orientation; the
-///   scheme only carries a natural/inverted override.
+///   scheme's generic `scrolling.reverse` (vertical) toggle flips it, applied
+///   here as the engine's output sign (the event-tap reverse transformer
+///   skips synthetic events, so the flip happens exactly once).
 ///
 /// Data flow and threading:
 /// - The `IOHIDManager` is scheduled on `EventThread`'s run loop, so the
@@ -190,9 +192,13 @@ final class TouchStreamManager: ObservableObject {
             return
         }
 
-        guard let streamDevice = streamDevices.first,
-              let touchStream = resolvedTouchStreamConfiguration(for: streamDevice),
-              touchStream.isEnabled else {
+        guard let streamDevice = streamDevices.first else {
+            setEventThreadConfiguration(scrolling: nil, tapToClick: nil)
+            return
+        }
+
+        let scrolling = resolvedScrollingConfiguration(for: streamDevice)
+        guard let touchStream = scrolling.$touchStream, touchStream.isEnabled else {
             setEventThreadConfiguration(scrolling: nil, tapToClick: nil)
             return
         }
@@ -202,7 +208,7 @@ final class TouchStreamManager: ObservableObject {
         let momentum = touchStream.momentum ?? .init()
         let config = TouchScrollEngine.Config(
             pointsPerCount: touchStream.resolvedScale,
-            invert: capabilities.scrollInverted(for: touchStream.resolvedDirection),
+            invert: capabilities.scrollInverted(reversed: scrolling.$reverse?.vertical ?? false),
             axis: capabilities.scrollAxis,
             acceleration: .init(
                 enabled: acceleration.isEnabled,
@@ -231,12 +237,12 @@ final class TouchStreamManager: ObservableObject {
         setEventThreadConfiguration(scrolling: config, tapToClick: tapConfig)
     }
 
-    /// The merged `scrolling.touchStream` configuration for the scheme
-    /// matching the keyboard's pointer device. Returns `nil` when no scheme
-    /// configures the touch stream.
-    private func resolvedTouchStreamConfiguration(
+    /// The merged `scrolling` configuration for the scheme matching the
+    /// keyboard's pointer device — the touch-stream tuning plus the generic
+    /// `reverse` toggle that decides the effective scroll direction.
+    private func resolvedScrollingConfiguration(
         for streamDevice: StreamDevice
-    ) -> Scheme.Scrolling.TouchStream? {
+    ) -> Scheme.Scrolling {
         let configuration = ConfigurationState.shared.configuration
 
         // Anchor scheme resolution to the pointer device of the *same
@@ -258,7 +264,7 @@ final class TouchStreamManager: ObservableObject {
                 withDevice: pointerDevice,
                 withProcess: nil,
                 withDisplay: nil
-            ).scrolling.$touchStream
+            ).scrolling
         }
 
         // The pointer device has not enumerated (yet) or could not be linked
@@ -278,7 +284,7 @@ final class TouchStreamManager: ObservableObject {
             ) as? String,
             category: [.mouse]
         )
-        return configuration.matchScheme(withDeviceMatcher: matcher).scrolling.$touchStream
+        return configuration.matchScheme(withDeviceMatcher: matcher).scrolling
     }
 
     private func setEventThreadConfiguration(
