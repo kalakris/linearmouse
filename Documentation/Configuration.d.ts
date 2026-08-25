@@ -51,7 +51,6 @@ export type Configuration = {
    * @examples [{"if":{"device":{"category":"mouse"}},"scrolling":{"reverse":"vertical"}}]
    */
   schemes?: Scheme[];
-
 };
 
 type Scheme = {
