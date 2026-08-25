@@ -99,7 +99,7 @@ final class TouchStreamScrollPoster {
         os_log(
             "post touch-stream scroll deltaY=%{public}.3f phase=%{public}@ momentum=%{public}@",
             log: Self.log,
-            type: .info,
+            type: .debug,
             deltaY,
             String(describing: scrollPhase),
             String(describing: momentumPhase)
