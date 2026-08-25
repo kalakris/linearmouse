@@ -128,39 +128,5 @@ extension ScrollingSettings {
                 )
             }
         }
-
-        private func sliderRow(
-            title: LocalizedStringKey,
-            description: String,
-            value: Binding<Double>,
-            range: ClosedRange<Double>,
-            fieldRange: ClosedRange<Double>? = nil,
-            minimumValueLabel: LocalizedStringKey,
-            maximumValueLabel: LocalizedStringKey,
-            formatter: NumberFormatter
-        ) -> some View {
-            HStack(alignment: .firstTextBaseline) {
-                Slider(
-                    value: value,
-                    in: range
-                ) {
-                    labelWithDescription {
-                        Text(title)
-                        Text(verbatim: description)
-                    }
-                } minimumValueLabel: {
-                    Text(minimumValueLabel)
-                } maximumValueLabel: {
-                    Text(maximumValueLabel)
-                }
-
-                DeferredNumberField(
-                    value: value,
-                    formatter: formatter,
-                    range: fieldRange ?? range
-                )
-                .frame(width: 60, height: 22)
-            }
-        }
     }
 }
