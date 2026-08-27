@@ -96,13 +96,21 @@ final class TouchStreamManager: ObservableObject {
     /// availability in the Scrolling settings).
     @Published private(set) var streamingDeviceIdentities: [HIDPhysicalDeviceIdentity] = []
 
-    // Cross-thread mirrors of the verified-device state: the identities for
-    // the event-tap (wheel suppression) path, the device handles (plus their
-    // validated protocol version, which selects the frame layout) for the
-    // input-report path's validation gate.
-    private let streamingDeviceIdentitiesLock = NSLock()
-    private var lockedStreamingDeviceIdentities: [HIDPhysicalDeviceIdentity] = []
-    private var lockedStreamDeviceHandles: [(device: IOHIDDevice, protocolVersion: Int)] = []
+    /// A verified streaming device as mirrored for cross-thread readers,
+    /// who project what they need: the identity for the event-tap (wheel
+    /// suppression) path, the device handle plus its validated protocol
+    /// version (which selects the frame layout) for the input-report path's
+    /// validation gate.
+    private struct VerifiedDevice {
+        var device: IOHIDDevice
+        var identity: HIDPhysicalDeviceIdentity
+        var protocolVersion: Int
+    }
+
+    // Cross-thread mirror of the verified-device state, updated whole under
+    // the lock.
+    private let verifiedDevicesLock = NSLock()
+    private var lockedVerifiedDevices: [VerifiedDevice] = []
 
     /// Reads the system-wide Natural Scrolling preference. Injectable so the
     /// direction derivation stays testable without global state; the default
@@ -115,8 +123,10 @@ final class TouchStreamManager: ObservableObject {
     private var scrollingEnabled = false
     private var momentumTimer: EventThreadTimer?
 
-    /// Per-pad stream bookkeeping (event-thread only): device-clock
+    /// Pad-0 stream bookkeeping (event-thread only): device-clock
     /// reconstruction, seq-gap accounting, and the stale-touch watchdog.
+    /// A single pad's worth of state suffices — `process(frame:)` drops
+    /// other pads up front, mirroring the engine's own pad filter.
     private struct PadStreamState {
         var clock = TouchStreamDeviceClock()
         var lastSeq: UInt8?
@@ -124,12 +134,16 @@ final class TouchStreamManager: ObservableObject {
         /// The last processed frame's engine-timeline timestamp, used to
         /// timestamp a synthesized stale-touch release.
         var lastTimestamp: TimeInterval = 0
-        /// One-shot watchdog re-armed on every touched frame; fires the
-        /// synthesized lift-off (see `staleTouchTimeout`).
+        /// Host arrival time (system uptime) of the last touched frame,
+        /// checked lazily when the stale-touch watchdog fires.
+        var lastTouchedFrameTime: TimeInterval = 0
+        /// One-shot stale-touch watchdog. Armed when a touch begins; on
+        /// fire it re-arms for the remainder unless the stream really went
+        /// silent (see `handleStaleTouch`). Disarmed by a release.
         var staleTimer: EventThreadTimer?
     }
 
-    private var padStates: [UInt8: PadStreamState] = [:]
+    private var padState = PadStreamState()
 
     /// Whether a non-zero contact_id has already been logged (one-shot; the
     /// hardware is single-touch, so this only ever notes a firmware
@@ -167,9 +181,9 @@ final class TouchStreamManager: ObservableObject {
             return false
         }
 
-        streamingDeviceIdentitiesLock.lock()
-        defer { streamingDeviceIdentitiesLock.unlock() }
-        return lockedStreamingDeviceIdentities.contains { $0.isSamePhysicalDevice(as: identity) }
+        verifiedDevicesLock.lock()
+        defer { verifiedDevicesLock.unlock() }
+        return lockedVerifiedDevices.contains { $0.identity.isSamePhysicalDevice(as: identity) }
     }
 
     /// Whether `device` (a pointer device) belongs to the same physical
@@ -376,7 +390,7 @@ final class TouchStreamManager: ObservableObject {
                 poster.closeGestureSeriesIfNeeded()
                 momentumTimer?.invalidate()
                 momentumTimer = nil
-                resetPadStates()
+                resetPadState()
             }
         }
     }
@@ -532,14 +546,15 @@ final class TouchStreamManager: ObservableObject {
     }
 
     private func updateStreamingDeviceIdentities() {
+        let verified = streamDevices.map {
+            VerifiedDevice(device: $0.device, identity: $0.identity, protocolVersion: $0.capabilities.version)
+        }
+
+        verifiedDevicesLock.lock()
+        lockedVerifiedDevices = verified
+        verifiedDevicesLock.unlock()
+
         let identities = streamDevices.map(\.identity)
-        let handles = streamDevices.map { (device: $0.device, protocolVersion: $0.capabilities.version) }
-
-        streamingDeviceIdentitiesLock.lock()
-        lockedStreamingDeviceIdentities = identities
-        lockedStreamDeviceHandles = handles
-        streamingDeviceIdentitiesLock.unlock()
-
         if streamingDeviceIdentities != identities {
             streamingDeviceIdentities = identities
         }
@@ -572,9 +587,9 @@ final class TouchStreamManager: ObservableObject {
     /// report on the run-loop thread. The version selects the frame layout
     /// (v2: 7 bytes, v3: 11 bytes with contact_id/seq/timestamp).
     private func verifiedProtocolVersion(of device: IOHIDDevice) -> Int? {
-        streamingDeviceIdentitiesLock.lock()
-        defer { streamingDeviceIdentitiesLock.unlock() }
-        return lockedStreamDeviceHandles.first { $0.device === device }?.protocolVersion
+        verifiedDevicesLock.lock()
+        defer { verifiedDevicesLock.unlock() }
+        return lockedVerifiedDevices.first { $0.device === device }?.protocolVersion
     }
 
     /// Called by the HID input-report callback on the run loop the manager
@@ -585,6 +600,18 @@ final class TouchStreamManager: ObservableObject {
         bytes: UnsafeMutablePointer<UInt8>,
         length: CFIndex
     ) {
+        // Only touch frames (report ID 0x04) are ours. Depending on transport
+        // and collection splitting — over BLE in particular — macOS can
+        // deliver *other* input reports of the same HID service to this
+        // matched device (e.g. ZMK's 9-byte mouse report), which would parse
+        // as a phantom touch frame since `TouchStreamFrame` accepts any
+        // payload of sufficient length. Checked first: the integer compare
+        // is free and this callback runs at ~100 Hz, while the
+        // verified-device gate below takes a lock and scans.
+        guard reportID == TouchStreamFrame.reportID else {
+            return
+        }
+
         // Hard gate: only devices whose feature report passed validation are
         // stream sources. Matching is by usage pair alone, so a foreign
         // vendor collection can deliver reports here — and even the real
@@ -594,31 +621,16 @@ final class TouchStreamManager: ObservableObject {
             return
         }
 
-        // Only touch frames (report ID 0x04) are ours. Depending on transport
-        // and collection splitting — over BLE in particular — macOS can
-        // deliver *other* input reports of the same HID service to this
-        // matched device (e.g. ZMK's 9-byte mouse report), which would parse
-        // as a phantom touch frame since `TouchStreamFrame` accepts any
-        // payload of sufficient length.
-        guard reportID == TouchStreamFrame.reportID else {
-            return
-        }
-
-        guard length > 0 else {
-            return
-        }
-
-        var payload = [UInt8](UnsafeBufferPointer(start: bytes, count: length))
-
-        // Defensive: some transports have been observed to prepend the report
-        // ID byte. If the payload is one byte longer than the contract, drop
-        // the leading byte.
-        if payload.count == TouchStreamFrame.payloadLength(forProtocolVersion: protocolVersion) + 1 {
-            payload.removeFirst()
-        }
+        // Parse straight out of the callback's buffer — no per-report heap
+        // allocation. Defensive: some transports have been observed to
+        // prepend the report ID byte; if the payload is one byte longer
+        // than the contract, parsing skips the leading byte.
+        let payload = UnsafeRawBufferPointer(start: bytes, count: length)
+        let offset = length == TouchStreamFrame.payloadLength(forProtocolVersion: protocolVersion) + 1 ? 1 : 0
 
         guard let frame = TouchStreamFrame(
             reportBytes: payload,
+            offset: offset,
             protocolVersion: protocolVersion,
             timestamp: ProcessInfo.processInfo.systemUptime
         ) else {
@@ -644,6 +656,13 @@ final class TouchStreamManager: ObservableObject {
             return
         }
 
+        // Only pad 0 is consumed (mirroring the engine's own hard pad
+        // filter), so a single pad's worth of clock/watchdog state
+        // suffices.
+        guard frame.padID == 0 else {
+            return
+        }
+
         // Single-touch hardware today: secondary contacts are dropped rather
         // than misread as pad-0 motion. Logged once so a multi-touch
         // firmware surprise is visible without spamming at 100 Hz.
@@ -662,13 +681,14 @@ final class TouchStreamManager: ObservableObject {
         }
 
         var frame = frame
-        var state = padStates[frame.padID] ?? PadStreamState()
+        // The host arrival time, before the v3 device-clock rewrite below.
+        let arrival = frame.timestamp
 
         // seq gap accounting (v3): the firmware's BLE send queue drops
         // oldest under pressure; device timestamps keep velocity correct
         // across a gap, so this is diagnostic only.
         if let seq = frame.seq {
-            if let lastSeq = state.lastSeq {
+            if let lastSeq = padState.lastSeq {
                 let dropped = seq &- lastSeq &- 1
                 if dropped != 0 {
                     os_log(
@@ -682,7 +702,7 @@ final class TouchStreamManager: ObservableObject {
                     )
                 }
             }
-            state.lastSeq = seq
+            padState.lastSeq = seq
         }
 
         // v3: replace the arrival timestamp with the reconstructed
@@ -691,27 +711,30 @@ final class TouchStreamManager: ObservableObject {
         // instead of BLE connection-interval batches. v2 frames carry no
         // device timestamp and keep the arrival-time behavior unchanged.
         if let ticks = frame.deviceTimestampTicks {
-            frame.timestamp = state.clock.reconstruct(
+            frame.timestamp = padState.clock.reconstruct(
                 ticks: ticks,
                 arrival: frame.timestamp
             )
         }
 
-        state.lastScrollMode = frame.scrollMode
-        state.lastTimestamp = frame.timestamp
+        padState.lastScrollMode = frame.scrollMode
+        padState.lastTimestamp = frame.timestamp
 
         // Stale-touch watchdog (spec: silence > ~150 ms while `touched` was
         // last set MUST be treated as lift-off — the release frame itself
-        // can be dropped). Re-armed on every touched frame, disarmed by a
-        // real release.
+        // can be dropped). Lazy deadline: each touched frame just records
+        // its arrival time; the one-shot is armed only when a touch begins,
+        // and on fire re-arms for the remainder while frames have kept the
+        // touch fresh. Disarmed by a real release.
         if frame.touched {
-            armStaleTouchTimer(for: frame.padID, in: &state)
+            padState.lastTouchedFrameTime = arrival
+            if padState.staleTimer == nil {
+                armStaleTouchTimer(after: Self.staleTouchTimeout)
+            }
         } else {
-            state.staleTimer?.invalidate()
-            state.staleTimer = nil
+            padState.staleTimer?.invalidate()
+            padState.staleTimer = nil
         }
-
-        padStates[frame.padID] = state
 
         for event in engine.handle(frame: frame) {
             poster.post(event)
@@ -720,68 +743,56 @@ final class TouchStreamManager: ObservableObject {
         updateMomentumTimer()
     }
 
-    /// Arms (or re-arms) the one-shot watchdog that synthesizes a lift-off
-    /// when the stream goes silent mid-touch.
-    private func armStaleTouchTimer(for padID: UInt8, in state: inout PadStreamState) {
-        state.staleTimer?.invalidate()
-        state.staleTimer = EventThread.shared.scheduleTimer(
-            interval: Self.staleTouchTimeout,
+    /// Arms the stale-touch one-shot to fire `interval` from now.
+    private func armStaleTouchTimer(after interval: TimeInterval) {
+        padState.staleTimer = EventThread.shared.scheduleTimer(
+            interval: interval,
             repeats: false
         ) { [weak self] in
-            self?.handleStaleTouch(padID: padID)
+            self?.handleStaleTouch()
         }
     }
 
-    /// Fires on the event thread when no frame has arrived for
-    /// `staleTouchTimeout` after a touched frame: synthesizes the release
-    /// the firmware presumably dropped, driving the exact same engine path a
-    /// real release frame takes (gesture end, momentum seeded from the last
-    /// known lift-off velocity).
-    private func handleStaleTouch(padID: UInt8) {
-        guard var state = padStates[padID] else {
+    /// Fires on the event thread when the stale-touch deadline lapses. If a
+    /// touched frame arrived since arming (the deadline is lazy — touched
+    /// frames only record their arrival time), the timer re-arms for the
+    /// remainder; otherwise the stream went silent mid-touch and the release
+    /// the firmware presumably dropped is synthesized, driving the exact
+    /// same `process(frame:)` path a real release frame takes (gesture end,
+    /// momentum seeded from the last known lift-off velocity).
+    private func handleStaleTouch() {
+        padState.staleTimer = nil
+
+        let elapsed = ProcessInfo.processInfo.systemUptime - padState.lastTouchedFrameTime
+        if elapsed < Self.staleTouchTimeout {
+            // A touched frame kept the touch fresh; wait out the remainder.
+            armStaleTouchTimer(after: Self.staleTouchTimeout - elapsed)
             return
         }
-
-        state.staleTimer = nil
-        padStates[padID] = state
 
         os_log(
-            "Touch stream pad %{public}d silent for %{public}.0f ms while touched; synthesizing lift-off",
+            "Touch stream pad 0 silent for %{public}.0f ms while touched; synthesizing lift-off",
             log: Self.log,
             type: .debug,
-            padID,
-            Self.staleTouchTimeout * 1000
+            elapsed * 1000
         )
-
-        guard scrollingEnabled else {
-            return
-        }
 
         // Timestamped on the engine timeline (device time for v3, arrival
-        // time for v2) at the moment the silence was declared. The engine
-        // ignores coordinates on release frames, so only pad, flags and the
-        // timestamp matter.
-        let release = TouchStreamFrame(
-            padID: padID,
+        // time for v2) as of now, the moment the silence was declared. The
+        // engine ignores coordinates on release frames, so only the flags
+        // and the timestamp matter.
+        process(frame: TouchStreamFrame(
             touched: false,
-            scrollMode: state.lastScrollMode,
-            timestamp: state.lastTimestamp + Self.staleTouchTimeout
-        )
-
-        for event in engine.handle(frame: release) {
-            poster.post(event)
-        }
-
-        updateMomentumTimer()
+            scrollMode: padState.lastScrollMode,
+            timestamp: padState.lastTimestamp + elapsed
+        ))
     }
 
-    /// Drops all per-pad bookkeeping (stale-touch timers, device clocks,
+    /// Drops the pad-0 stream bookkeeping (stale-touch timer, device clock,
     /// seq tracking). Event thread only.
-    private func resetPadStates() {
-        for state in padStates.values {
-            state.staleTimer?.invalidate()
-        }
-        padStates.removeAll()
+    private func resetPadState() {
+        padState.staleTimer?.invalidate()
+        padState = PadStreamState()
     }
 
     private func updateMomentumTimer() {
@@ -824,7 +835,7 @@ final class TouchStreamManager: ObservableObject {
             poster.closeGestureSeriesIfNeeded()
             momentumTimer?.invalidate()
             momentumTimer = nil
-            resetPadStates()
+            resetPadState()
         }
     }
 }
