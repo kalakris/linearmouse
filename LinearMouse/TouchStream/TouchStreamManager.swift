@@ -9,21 +9,28 @@ import os.log
 /// Consumes the raw touch stream from a supported keyboard trackpad and
 /// synthesizes trackpad-style scrolling.
 ///
-/// The device (MoErgo Go60 right half) exposes a vendor-defined HID
-/// collection (usage page 0xFF00, usage 0x01) that macOS enumerates as a
-/// separate `IOHIDDevice`. Input reports carry absolute Cirque touch frames
-/// (see `TouchStreamFrame`); a feature report describes the device's
-/// capabilities and pad orientation (see `TouchStreamCapabilities`).
+/// A supported keyboard (e.g. the MoErgo Go60 right half) exposes a
+/// vendor-defined HID collection (usage page 0xFF00, usage 0x01) that macOS
+/// enumerates as a separate `IOHIDDevice`. Input reports carry absolute
+/// Cirque touch frames (see `TouchStreamFrame`); a feature report describes
+/// the device's capabilities and pad orientation (see
+/// `TouchStreamCapabilities`).
 ///
 /// Lifecycle:
-/// - `start()` opens an `IOHIDManager` matching the vendor collection (by
-///   VID/PID + usage pair) on the event thread's run loop. It survives
+/// - `start()` opens an `IOHIDManager` matching the vendor collection by the
+///   usage pair alone — deliberately not by VID/PID, so any keyboard whose
+///   firmware implements the protocol streams, not just one hardcoded model
+///   (ZMK keyboards share a default VID/PID anyway, so it could never tell
+///   implementors apart) — on the event thread's run loop. It survives
 ///   device connect/disconnect (BLE and USB) and is a complete no-op while
-///   the device is absent. `GlobalEventTap` restarts the manager around
+///   no device is present. `GlobalEventTap` restarts the manager around
 ///   event-thread restarts so it is never left scheduled on a dead run
 ///   loop.
-/// - On device connect the feature report is read once. Devices without a
-///   supported feature report are ignored entirely (non-streaming).
+/// - On device connect the feature report is read and validated once; this
+///   is the hard gate that admits a device as a stream source. A foreign
+///   device that merely shares the vendor usage pair fails it and is
+///   ignored entirely (logged, non-streaming) — `handleReport` drops input
+///   reports from anything that has not passed the gate.
 /// - The touch-stream configuration lives on the per-device scheme
 ///   (`schemes[].scrolling.touchStream`), matched against the keyboard's
 ///   pointer device. The pointer device is identified by physical identity
@@ -61,26 +68,16 @@ final class TouchStreamManager: ObservableObject {
     private static let log = OSLog(subsystem: Bundle.main.bundleIdentifier!, category: "TouchStream")
     private static let momentumTimerInterval: TimeInterval = 1.0 / 120.0
 
-    /// Frozen protocol constants for the supported device.
+    /// Frozen protocol constants: the vendor-defined usage pair the touch
+    /// stream lives on. Deliberately no VID/PID — the feature-report
+    /// validation, not the device's identity, decides who streams.
     private enum Constants {
-        static let vendorID = 0x16C0
-        static let productID = 0x27D9
         static let usagePage = 0xFF00
         static let usage = 0x01
     }
 
-    /// Vendor/product ID of a streaming device's vendor collection. NOT an
-    /// identity — multiple ZMK keyboards ship the same default VID/PID — only
-    /// a coarse pre-filter; physical identity is what links the vendor
-    /// collection to the pointer device of the *same* keyboard.
-    struct StreamDeviceID: Hashable {
-        var vendorID: Int
-        var productID: Int
-    }
-
     private struct StreamDevice {
         var device: IOHIDDevice
-        var id: StreamDeviceID
         var identity: HIDPhysicalDeviceIdentity
         var capabilities: TouchStreamCapabilities
     }
@@ -99,10 +96,12 @@ final class TouchStreamManager: ObservableObject {
     /// availability in the Scrolling settings).
     @Published private(set) var streamingDeviceIdentities: [HIDPhysicalDeviceIdentity] = []
 
-    // Cross-thread mirror of `streamingDeviceIdentities` for the event-tap
-    // path.
+    // Cross-thread mirrors of the verified-device state: the identities for
+    // the event-tap (wheel suppression) path, the device handles for the
+    // input-report path's validation gate.
     private let streamingDeviceIdentitiesLock = NSLock()
     private var lockedStreamingDeviceIdentities: [HIDPhysicalDeviceIdentity] = []
+    private var lockedStreamDeviceHandles: [IOHIDDevice] = []
 
     /// Reads the system-wide Natural Scrolling preference. Injectable so the
     /// direction derivation stays testable without global state; the default
@@ -287,15 +286,11 @@ final class TouchStreamManager: ObservableObject {
         let configuration = ConfigurationState.shared.configuration
 
         // Anchor scheme resolution to the pointer device of the *same
-        // physical keyboard* as the vendor collection. VID/PID alone would be
-        // ambiguous (another ZMK keyboard with the default VID/PID could
-        // enumerate first), so it only pre-filters; physical identity
-        // decides.
+        // physical keyboard* as the vendor collection. VID/PID cannot do
+        // this (multiple ZMK keyboards ship the same default VID/PID);
+        // physical identity decides.
         if let pointerDevice = DeviceManager.shared.devices.first(where: { device in
-            guard device.vendorID == streamDevice.id.vendorID,
-                  device.productID == streamDevice.id.productID,
-                  let identity = device.physicalIdentity
-            else {
+            guard let identity = device.physicalIdentity else {
                 return false
             }
 
@@ -313,8 +308,14 @@ final class TouchStreamManager: ObservableObject {
         // collection's own HID properties, which share
         // vendor/product/name/serial with the pointer interface.
         let matcher = DeviceMatcher(
-            vendorID: streamDevice.id.vendorID,
-            productID: streamDevice.id.productID,
+            vendorID: IOHIDDeviceGetProperty(
+                streamDevice.device,
+                kIOHIDVendorIDKey as CFString
+            ) as? Int,
+            productID: IOHIDDeviceGetProperty(
+                streamDevice.device,
+                kIOHIDProductIDKey as CFString
+            ) as? Int,
             productName: IOHIDDeviceGetProperty(
                 streamDevice.device,
                 kIOHIDProductKey as CFString
@@ -357,13 +358,13 @@ final class TouchStreamManager: ObservableObject {
 
         let manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
 
-        // VID/PID narrows it to the Go60 right half; the usage pair selects
-        // the vendor-defined collection among its HID interfaces. The report
-        // ID is not part of the match (IOHIDManager cannot match on it); the
-        // input-report callback filters on it instead — see `handleReport`.
+        // Match on the vendor usage pair alone: any keyboard implementing
+        // the touch-stream protocol qualifies, and the feature-report
+        // validation in `deviceDidConnect` — not a VID/PID — decides whether
+        // a matched device actually streams. The report ID is not part of
+        // the match (IOHIDManager cannot match on it); the input-report
+        // callback filters on it instead — see `handleReport`.
         let matching: [String: Any] = [
-            kIOHIDVendorIDKey: Constants.vendorID,
-            kIOHIDProductIDKey: Constants.productID,
             kIOHIDDeviceUsagePageKey: Constants.usagePage,
             kIOHIDDeviceUsageKey: Constants.usage
         ]
@@ -392,12 +393,13 @@ final class TouchStreamManager: ObservableObject {
                 manager.deviceDidDisconnect(device)
             }
         }, context)
-        IOHIDManagerRegisterInputReportCallback(manager, { context, result, _, type, reportID, report, reportLength in
-            guard let context, result == kIOReturnSuccess, type == kIOHIDReportTypeInput else {
+        IOHIDManagerRegisterInputReportCallback(manager, { context, result, sender, type, reportID, report, reportLength in
+            guard let context, let sender, result == kIOReturnSuccess, type == kIOHIDReportTypeInput else {
                 return
             }
             let manager = Unmanaged<TouchStreamManager>.fromOpaque(context).takeUnretainedValue()
-            manager.handleReport(reportID: reportID, bytes: report, length: reportLength)
+            let device = Unmanaged<IOHIDDevice>.fromOpaque(sender).takeUnretainedValue()
+            manager.handleReport(from: device, reportID: reportID, bytes: report, length: reportLength)
         }, context)
 
         // Schedule on the event thread's run loop so input reports arrive
@@ -455,11 +457,6 @@ final class TouchStreamManager: ObservableObject {
             return
         }
 
-        let vendorID = IOHIDDeviceGetProperty(device, kIOHIDVendorIDKey as CFString) as? Int
-            ?? Constants.vendorID
-        let productID = IOHIDDeviceGetProperty(device, kIOHIDProductIDKey as CFString) as? Int
-            ?? Constants.productID
-
         os_log(
             """
             Touch stream device connected: %{public}@ (protocol v%{public}d, pads 0x%{public}x, \
@@ -482,7 +479,6 @@ final class TouchStreamManager: ObservableObject {
         streamDevices.removeAll { $0.device === device }
         streamDevices.append(.init(
             device: device,
-            id: .init(vendorID: vendorID, productID: productID),
             identity: HIDPhysicalDeviceIdentity(hidDevice: device),
             capabilities: capabilities
         ))
@@ -505,9 +501,11 @@ final class TouchStreamManager: ObservableObject {
 
     private func updateStreamingDeviceIdentities() {
         let identities = streamDevices.map(\.identity)
+        let handles = streamDevices.map(\.device)
 
         streamingDeviceIdentitiesLock.lock()
         lockedStreamingDeviceIdentities = identities
+        lockedStreamDeviceHandles = handles
         streamingDeviceIdentitiesLock.unlock()
 
         if streamingDeviceIdentities != identities {
@@ -537,9 +535,30 @@ final class TouchStreamManager: ObservableObject {
 
     // MARK: - Report handling
 
+    /// Whether `device` has passed feature-report validation. Thread-safe;
+    /// called per input report on the run-loop thread.
+    private func isVerifiedStreamDevice(_ device: IOHIDDevice) -> Bool {
+        streamingDeviceIdentitiesLock.lock()
+        defer { streamingDeviceIdentitiesLock.unlock() }
+        return lockedStreamDeviceHandles.contains { $0 === device }
+    }
+
     /// Called by the HID input-report callback on the run loop the manager
     /// is scheduled on — normally the event thread itself.
-    private func handleReport(reportID: UInt32, bytes: UnsafeMutablePointer<UInt8>, length: CFIndex) {
+    private func handleReport(
+        from device: IOHIDDevice,
+        reportID: UInt32,
+        bytes: UnsafeMutablePointer<UInt8>,
+        length: CFIndex
+    ) {
+        // Hard gate: only devices whose feature report passed validation are
+        // stream sources. Matching is by usage pair alone, so a foreign
+        // vendor collection can deliver reports here — and even the real
+        // device's reports must wait until its capabilities are verified.
+        guard isVerifiedStreamDevice(device) else {
+            return
+        }
+
         // Only touch frames (report ID 0x04) are ours. Depending on transport
         // and collection splitting — over BLE in particular — macOS can
         // deliver *other* input reports of the same HID service to this
