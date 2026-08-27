@@ -116,10 +116,17 @@ final class TouchStreamManager: ObservableObject {
     private var momentumTimer: EventThreadTimer?
 
     /// Per-pad stream bookkeeping (event-thread only): device-clock
-    /// reconstruction and seq-gap accounting.
+    /// reconstruction, seq-gap accounting, and the stale-touch watchdog.
     private struct PadStreamState {
         var clock = TouchStreamDeviceClock()
         var lastSeq: UInt8?
+        var lastScrollMode = false
+        /// The last processed frame's engine-timeline timestamp, used to
+        /// timestamp a synthesized stale-touch release.
+        var lastTimestamp: TimeInterval = 0
+        /// One-shot watchdog re-armed on every touched frame; fires the
+        /// synthesized lift-off (see `staleTouchTimeout`).
+        var staleTimer: EventThreadTimer?
     }
 
     private var padStates: [UInt8: PadStreamState] = [:]
@@ -128,6 +135,15 @@ final class TouchStreamManager: ObservableObject {
     /// hardware is single-touch, so this only ever notes a firmware
     /// surprise). Event-thread only.
     private var loggedNonZeroContactID = false
+
+    /// Frame silence longer than this while `touched` was last set is
+    /// treated as a lift-off, per the protocol spec (~150 ms): the
+    /// firmware's BLE send queue drops oldest under pressure, so the release
+    /// frame itself can be lost, and without this a dropped release would
+    /// leave the gesture (and the app's scroll phase) open forever. 150 ms
+    /// is far above any real BLE connection-interval batch (tens of ms) and
+    /// still short enough that a synthesized lift-off feels instant.
+    private static let staleTouchTimeout: TimeInterval = 0.150
 
     init(
         systemPrefersNaturalScrolling: @escaping () -> Bool = SystemScrollingPreference.prefersNatural
@@ -681,6 +697,20 @@ final class TouchStreamManager: ObservableObject {
             )
         }
 
+        state.lastScrollMode = frame.scrollMode
+        state.lastTimestamp = frame.timestamp
+
+        // Stale-touch watchdog (spec: silence > ~150 ms while `touched` was
+        // last set MUST be treated as lift-off — the release frame itself
+        // can be dropped). Re-armed on every touched frame, disarmed by a
+        // real release.
+        if frame.touched {
+            armStaleTouchTimer(for: frame.padID, in: &state)
+        } else {
+            state.staleTimer?.invalidate()
+            state.staleTimer = nil
+        }
+
         padStates[frame.padID] = state
 
         for event in engine.handle(frame: frame) {
@@ -690,9 +720,67 @@ final class TouchStreamManager: ObservableObject {
         updateMomentumTimer()
     }
 
-    /// Drops all per-pad bookkeeping (device clocks, seq tracking). Event
-    /// thread only.
+    /// Arms (or re-arms) the one-shot watchdog that synthesizes a lift-off
+    /// when the stream goes silent mid-touch.
+    private func armStaleTouchTimer(for padID: UInt8, in state: inout PadStreamState) {
+        state.staleTimer?.invalidate()
+        state.staleTimer = EventThread.shared.scheduleTimer(
+            interval: Self.staleTouchTimeout,
+            repeats: false
+        ) { [weak self] in
+            self?.handleStaleTouch(padID: padID)
+        }
+    }
+
+    /// Fires on the event thread when no frame has arrived for
+    /// `staleTouchTimeout` after a touched frame: synthesizes the release
+    /// the firmware presumably dropped, driving the exact same engine path a
+    /// real release frame takes (gesture end, momentum seeded from the last
+    /// known lift-off velocity).
+    private func handleStaleTouch(padID: UInt8) {
+        guard var state = padStates[padID] else {
+            return
+        }
+
+        state.staleTimer = nil
+        padStates[padID] = state
+
+        os_log(
+            "Touch stream pad %{public}d silent for %{public}.0f ms while touched; synthesizing lift-off",
+            log: Self.log,
+            type: .debug,
+            padID,
+            Self.staleTouchTimeout * 1000
+        )
+
+        guard scrollingEnabled else {
+            return
+        }
+
+        // Timestamped on the engine timeline (device time for v3, arrival
+        // time for v2) at the moment the silence was declared. The engine
+        // ignores coordinates on release frames, so only pad, flags and the
+        // timestamp matter.
+        let release = TouchStreamFrame(
+            padID: padID,
+            touched: false,
+            scrollMode: state.lastScrollMode,
+            timestamp: state.lastTimestamp + Self.staleTouchTimeout
+        )
+
+        for event in engine.handle(frame: release) {
+            poster.post(event)
+        }
+
+        updateMomentumTimer()
+    }
+
+    /// Drops all per-pad bookkeeping (stale-touch timers, device clocks,
+    /// seq tracking). Event thread only.
     private func resetPadStates() {
+        for state in padStates.values {
+            state.staleTimer?.invalidate()
+        }
         padStates.removeAll()
     }
 
