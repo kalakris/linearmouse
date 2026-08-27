@@ -188,7 +188,8 @@ struct TouchStreamCapabilities: Equatable {
         Self.supportedVersions.contains(version) && !pads.isEmpty
     }
 
-    /// The pad the scroll engine consumes (pad_id 0, the right pad), falling
+    /// The pad whose geometry and orientation configure the scroll engine
+    /// (pad_id 0, the right pad; both pads share one engine config), falling
     /// back to the lowest present pad. Only nil for a degenerate empty
     /// report (rejected by `isSupported`).
     var primaryPad: Pad? {

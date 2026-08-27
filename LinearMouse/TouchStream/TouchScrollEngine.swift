@@ -29,6 +29,10 @@ import Foundation
 ///   (`.momentumEnded` followed by `.touchBegan`) — the "catch" gesture.
 ///
 /// Vertical only; horizontal scrolling is out of scope for the prototype.
+///
+/// The engine is pad-agnostic: `TouchStreamManager` arbitrates between the
+/// device's pads and only ever forwards one pad's frames per gesture, so a
+/// single engine instance serves both Go60 trackpads.
 final class TouchScrollEngine {
     struct Config: Equatable {
         /// Screen points of scroll per Cirque touch count.
@@ -124,10 +128,6 @@ final class TouchScrollEngine {
     /// emitting a huge delta.
     private static let maxPlausibleStepCounts = 512.0
 
-    /// The pad this engine scrolls for. pad_id 1 (left pad) is reserved by
-    /// the protocol and ignored for now.
-    private static let scrollPadID: UInt8 = 0
-
     // MARK: - State
 
     var config: Config
@@ -164,13 +164,16 @@ final class TouchScrollEngine {
         state == .momentum
     }
 
+    /// True while a gesture is in progress (touching or coasting).
+    /// `TouchStreamManager` uses this to clear its scroll-pad claim once a
+    /// gesture has fully ended.
+    var isActive: Bool {
+        state != .idle
+    }
+
     // MARK: - Frame input
 
     func handle(frame: TouchStreamFrame) -> [Event] {
-        guard frame.padID == Self.scrollPadID else {
-            return []
-        }
-
         if frame.touched, frame.scrollMode {
             return handleScrollTouch(frame: frame)
         }

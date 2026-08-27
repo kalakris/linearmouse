@@ -376,10 +376,16 @@ final class TouchScrollEngineTests: XCTestCase {
         XCTAssertTrue(engine.wantsMomentumTicks)
     }
 
-    func testLeftPadFramesAreIgnored() {
+    func testLeftPadFramesDriveTheGestureLikePadZero() {
+        // Pad arbitration lives in TouchStreamManager; the engine scrolls
+        // for whichever pad's frames it is handed. Pad 1 (the left pad)
+        // behaves identically to pad 0.
         let engine = makeEngine()
-        let events = engine.handle(frame: scrollFrame(y: 500, at: 0, pad: 1))
-        XCTAssertTrue(events.isEmpty)
+        XCTAssertEqual(engine.handle(frame: scrollFrame(y: 500, at: 0, pad: 1)), [.touchBegan])
+        XCTAssertEqual(
+            engine.handle(frame: scrollFrame(y: 525, at: Self.frameInterval, pad: 1)),
+            [.touchChanged(deltaY: 25 * 0.25)]
+        )
     }
 
     func testScrollModeDroppedMidTouchEndsGestureWithoutMomentum() {

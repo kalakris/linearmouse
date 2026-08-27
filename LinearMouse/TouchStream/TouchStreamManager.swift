@@ -136,6 +136,16 @@ final class TouchStreamManager: ObservableObject {
     /// surprise). Event-thread only.
     private var loggedNonZeroContactID = false
 
+    /// The pad that currently owns the scroll gesture, or nil while no
+    /// gesture (including momentum) is in progress. The engine is a single
+    /// state machine, so only one pad scrolls at a time: the first pad to
+    /// touch claims the gesture, and the other pad's frames — including its
+    /// releases, which never had a gesture — are dropped until the claim
+    /// clears. The claim clears whenever the engine returns to idle: a
+    /// release without momentum, momentum decaying away, a mid-touch
+    /// scroll-mode exit, or a stream interrupt. Event-thread only.
+    private var activeScrollPad: UInt8?
+
     /// Frame silence longer than this while `touched` was last set is
     /// treated as a lift-off, per the protocol spec (~150 ms): the
     /// firmware's BLE send queue drops oldest under pressure, so the release
@@ -713,8 +723,20 @@ final class TouchStreamManager: ObservableObject {
 
         padStates[frame.padID] = state
 
+        // Single-pad arbitration (see `activeScrollPad`): first touch wins;
+        // the non-active pad's frames never reach the engine.
+        if frame.touched, activeScrollPad == nil {
+            activeScrollPad = frame.padID
+        }
+        guard frame.padID == activeScrollPad else {
+            return
+        }
+
         for event in engine.handle(frame: frame) {
             poster.post(event)
+        }
+        if !engine.isActive {
+            activeScrollPad = nil
         }
 
         updateMomentumTimer()
@@ -757,6 +779,12 @@ final class TouchStreamManager: ObservableObject {
             return
         }
 
+        // Only the claim-holding pad has a gesture to close; a non-active
+        // pad's synthesized lift-off is a no-op.
+        guard padID == activeScrollPad else {
+            return
+        }
+
         // Timestamped on the engine timeline (device time for v3, arrival
         // time for v2) at the moment the silence was declared. The engine
         // ignores coordinates on release frames, so only pad, flags and the
@@ -771,17 +799,21 @@ final class TouchStreamManager: ObservableObject {
         for event in engine.handle(frame: release) {
             poster.post(event)
         }
+        if !engine.isActive {
+            activeScrollPad = nil
+        }
 
         updateMomentumTimer()
     }
 
     /// Drops all per-pad bookkeeping (stale-touch timers, device clocks,
-    /// seq tracking). Event thread only.
+    /// seq tracking, the scroll-pad claim). Event thread only.
     private func resetPadStates() {
         for state in padStates.values {
             state.staleTimer?.invalidate()
         }
         padStates.removeAll()
+        activeScrollPad = nil
     }
 
     private func updateMomentumTimer() {
@@ -804,6 +836,9 @@ final class TouchStreamManager: ObservableObject {
     private func momentumTick() {
         for event in engine.momentumTick(at: ProcessInfo.processInfo.systemUptime) {
             poster.post(event)
+        }
+        if !engine.isActive {
+            activeScrollPad = nil
         }
 
         if !engine.wantsMomentumTicks {
