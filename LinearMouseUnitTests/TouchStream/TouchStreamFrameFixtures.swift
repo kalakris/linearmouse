@@ -18,3 +18,46 @@ func pointerFrame(x: Int = 1000, y: Int = 500, at timestamp: TimeInterval, pad: 
 func releaseFrame(at timestamp: TimeInterval, scrollMode: Bool) -> TouchStreamFrame {
     .init(touched: false, scrollMode: scrollMode, timestamp: timestamp)
 }
+
+// MARK: - Raw wire payloads
+
+/// A raw v2 input-report payload (7 bytes: pad, x LE, y LE, z, flags).
+func v2FrameBytes(
+    pad: UInt8 = 0,
+    x: UInt16 = 1000,
+    y: UInt16 = 500,
+    z: UInt8 = 40,
+    flags: UInt8 = 0b11 // touched + scroll mode
+) -> [UInt8] {
+    [
+        pad,
+        UInt8(x & 0xFF), UInt8(x >> 8),
+        UInt8(y & 0xFF), UInt8(y >> 8),
+        z,
+        flags
+    ]
+}
+
+/// A raw v3 input-report payload (11 bytes: pad, contact, x LE, y LE, z,
+/// flags, seq, timestamp LE in 100 µs ticks).
+func v3FrameBytes(
+    pad: UInt8 = 0,
+    contact: UInt8 = 0,
+    x: UInt16 = 1000,
+    y: UInt16 = 500,
+    z: UInt8 = 40,
+    flags: UInt8 = 0b11, // touched + scroll mode
+    seq: UInt8 = 0,
+    timestampTicks: UInt16 = 0
+) -> [UInt8] {
+    [
+        pad,
+        contact,
+        UInt8(x & 0xFF), UInt8(x >> 8),
+        UInt8(y & 0xFF), UInt8(y >> 8),
+        z,
+        flags,
+        seq,
+        UInt8(timestampTicks & 0xFF), UInt8(timestampTicks >> 8)
+    ]
+}

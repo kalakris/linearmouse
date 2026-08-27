@@ -462,24 +462,61 @@ final class TouchScrollEngineTests: XCTestCase {
 }
 
 final class TouchStreamFrameTests: XCTestCase {
-    func testParsesWellFormedPayload() {
+    func testParsesWellFormedV2Payload() {
         // pad 0, x = 0x0403 (1027), y = 0x0201 (513), z = 42, touched + scroll mode.
         let frame = TouchStreamFrame(
             reportBytes: [0x00, 0x03, 0x04, 0x01, 0x02, 0x2A, 0x03],
+            protocolVersion: 2,
             timestamp: 1.5
         )
         XCTAssertEqual(frame?.padID, 0)
+        XCTAssertEqual(frame?.contactID, 0)
         XCTAssertEqual(frame?.x, 1027)
         XCTAssertEqual(frame?.y, 513)
         XCTAssertEqual(frame?.z, 42)
         XCTAssertEqual(frame?.touched, true)
         XCTAssertEqual(frame?.scrollMode, true)
+        XCTAssertNil(frame?.seq)
+        XCTAssertNil(frame?.deviceTimestampTicks)
         XCTAssertEqual(frame?.timestamp, 1.5)
+    }
+
+    func testParsesWellFormedV3Payload() {
+        // pad 0, contact 1, x = 0x0403 (1027), y = 0x0201 (513), z = 42,
+        // touched + scroll mode, seq 0x2B, timestamp 0x8001 ticks.
+        let frame = TouchStreamFrame(
+            reportBytes: [0x00, 0x01, 0x03, 0x04, 0x01, 0x02, 0x2A, 0x03, 0x2B, 0x01, 0x80],
+            protocolVersion: 3,
+            timestamp: 1.5
+        )
+        XCTAssertEqual(frame?.padID, 0)
+        XCTAssertEqual(frame?.contactID, 1)
+        XCTAssertEqual(frame?.x, 1027)
+        XCTAssertEqual(frame?.y, 513)
+        XCTAssertEqual(frame?.z, 42)
+        XCTAssertEqual(frame?.touched, true)
+        XCTAssertEqual(frame?.scrollMode, true)
+        XCTAssertEqual(frame?.seq, 0x2B)
+        XCTAssertEqual(frame?.deviceTimestampTicks, 0x8001)
+        XCTAssertEqual(frame?.timestamp, 1.5)
+    }
+
+    func testParsesV3FixtureRoundTrip() {
+        let frame = TouchStreamFrame(
+            reportBytes: v3FrameBytes(x: 1234, y: 987, seq: 250, timestampTicks: 0xFFFE),
+            protocolVersion: 3,
+            timestamp: 0
+        )
+        XCTAssertEqual(frame?.x, 1234)
+        XCTAssertEqual(frame?.y, 987)
+        XCTAssertEqual(frame?.seq, 250)
+        XCTAssertEqual(frame?.deviceTimestampTicks, 0xFFFE)
     }
 
     func testParsesFlagCombinations() {
         let release = TouchStreamFrame(
             reportBytes: [0x00, 0, 0, 0, 0, 0, 0x00],
+            protocolVersion: 2,
             timestamp: 0
         )
         XCTAssertEqual(release?.touched, false)
@@ -487,6 +524,7 @@ final class TouchStreamFrameTests: XCTestCase {
 
         let pointerTime = TouchStreamFrame(
             reportBytes: [0x00, 0, 0, 0, 0, 10, 0x01],
+            protocolVersion: 2,
             timestamp: 0
         )
         XCTAssertEqual(pointerTime?.touched, true)
@@ -495,25 +533,125 @@ final class TouchStreamFrameTests: XCTestCase {
         // Reserved flag bits must not confuse parsing.
         let reservedBits = TouchStreamFrame(
             reportBytes: [0x01, 0, 0, 0, 0, 10, 0xFF],
+            protocolVersion: 2,
             timestamp: 0
         )
         XCTAssertEqual(reservedBits?.padID, 1)
         XCTAssertEqual(reservedBits?.touched, true)
         XCTAssertEqual(reservedBits?.scrollMode, true)
+
+        // v3 flags live at byte 7.
+        let v3Release = TouchStreamFrame(
+            reportBytes: v3FrameBytes(flags: 0b10),
+            protocolVersion: 3,
+            timestamp: 0
+        )
+        XCTAssertEqual(v3Release?.touched, false)
+        XCTAssertEqual(v3Release?.scrollMode, true)
     }
 
     func testRejectsShortReports() {
-        XCTAssertNil(TouchStreamFrame(reportBytes: [], timestamp: 0))
-        XCTAssertNil(TouchStreamFrame(reportBytes: [0x00, 0x01], timestamp: 0))
-        XCTAssertNil(TouchStreamFrame(reportBytes: [0, 0, 0, 0, 0, 0], timestamp: 0))
+        XCTAssertNil(TouchStreamFrame(reportBytes: [], protocolVersion: 2, timestamp: 0))
+        XCTAssertNil(TouchStreamFrame(reportBytes: [0x00, 0x01], protocolVersion: 2, timestamp: 0))
+        XCTAssertNil(TouchStreamFrame(reportBytes: [0, 0, 0, 0, 0, 0], protocolVersion: 2, timestamp: 0))
+        XCTAssertNil(TouchStreamFrame(reportBytes: [], protocolVersion: 3, timestamp: 0))
+        XCTAssertNil(TouchStreamFrame(reportBytes: [0, 0, 0, 0, 0, 0], protocolVersion: 3, timestamp: 0))
+    }
+
+    /// A v3 device's frame that is long enough for v2 but short of the v3
+    /// layout parses with the v2 layout (defensive length fallback) instead
+    /// of being dropped.
+    func testV3VersionWithV2LengthFallsBackToV2Layout() {
+        let frame = TouchStreamFrame(
+            reportBytes: [0x00, 0x03, 0x04, 0x01, 0x02, 0x2A, 0x03],
+            protocolVersion: 3,
+            timestamp: 0
+        )
+        XCTAssertEqual(frame?.x, 1027)
+        XCTAssertEqual(frame?.y, 513)
+        XCTAssertEqual(frame?.touched, true)
+        XCTAssertNil(frame?.seq)
+        XCTAssertNil(frame?.deviceTimestampTicks)
     }
 
     func testIgnoresTrailingPadding() {
         let frame = TouchStreamFrame(
             reportBytes: [0x00, 0x03, 0x04, 0x01, 0x02, 0x2A, 0x03, 0x00, 0x00],
+            protocolVersion: 2,
             timestamp: 0
         )
         XCTAssertEqual(frame?.x, 1027)
         XCTAssertEqual(frame?.scrollMode, true)
+
+        let v3Frame = TouchStreamFrame(
+            reportBytes: v3FrameBytes(x: 1027, seq: 7) + [0x00, 0x00],
+            protocolVersion: 3,
+            timestamp: 0
+        )
+        XCTAssertEqual(v3Frame?.x, 1027)
+        XCTAssertEqual(v3Frame?.seq, 7)
+    }
+}
+
+final class TouchStreamDeviceClockTests: XCTestCase {
+    func testAnchorsToArrivalTimeAndAdvancesByDeviceDeltas() {
+        var clock = TouchStreamDeviceClock()
+
+        // Anchor: first frame maps to its arrival time.
+        XCTAssertEqual(clock.reconstruct(ticks: 1000, arrival: 100.0), 100.0)
+
+        // 100 ticks = 10 ms of device time, regardless of arrival jitter.
+        XCTAssertEqual(clock.reconstruct(ticks: 1100, arrival: 100.0401), 100.010, accuracy: 1e-9)
+        // A batched frame arriving in the same callback burst still advances
+        // by its true device-side sampling interval.
+        XCTAssertEqual(clock.reconstruct(ticks: 1200, arrival: 100.0402), 100.020, accuracy: 1e-9)
+    }
+
+    func testHandlesTimestampWrap() {
+        var clock = TouchStreamDeviceClock()
+
+        _ = clock.reconstruct(ticks: 0xFFFF, arrival: 50.0)
+        // (0x0063 - 0xFFFF) mod 0x10000 = 100 ticks = 10 ms.
+        XCTAssertEqual(clock.reconstruct(ticks: 0x0063, arrival: 50.012), 50.010, accuracy: 1e-9)
+    }
+
+    func testLargeDeviceDeltaReAnchorsToArrival() {
+        var clock = TouchStreamDeviceClock()
+
+        _ = clock.reconstruct(ticks: 0, arrival: 10.0)
+        // 30000 ticks = 3 s > the ~2 s discontinuity threshold: distrust the
+        // wrapped delta and re-anchor to arrival.
+        XCTAssertEqual(clock.reconstruct(ticks: 30000, arrival: 13.1), 13.1)
+    }
+
+    func testLongArrivalSilenceReAnchorsDespiteSmallDeviceDelta() {
+        var clock = TouchStreamDeviceClock()
+
+        _ = clock.reconstruct(ticks: 500, arrival: 10.0)
+        // The device counter wraps every 6.5536 s, so after ~7 s of silence
+        // a small wrapped delta (here 20 ms) is a lie; the arrival gap
+        // exposes it.
+        XCTAssertEqual(clock.reconstruct(ticks: 700, arrival: 17.0), 17.0)
+    }
+
+    func testReAnchoringNeverMovesBackwards() {
+        var clock = TouchStreamDeviceClock()
+
+        _ = clock.reconstruct(ticks: 0, arrival: 20.0)
+        let advanced = clock.reconstruct(ticks: 10000, arrival: 20.05) // +1 s device time
+        XCTAssertEqual(advanced, 21.0, accuracy: 1e-9)
+
+        // A discontinuity whose arrival time sits behind the reconstructed
+        // timeline clamps to the timeline instead of stepping backwards.
+        _ = clock.reconstruct(ticks: 40000, arrival: 20.9)
+        XCTAssertGreaterThanOrEqual(clock.reconstruct(ticks: 40100, arrival: 20.91), advanced)
+    }
+
+    func testResetForgetsTheAnchor() {
+        var clock = TouchStreamDeviceClock()
+
+        _ = clock.reconstruct(ticks: 1000, arrival: 5.0)
+        clock.reset()
+        XCTAssertEqual(clock.reconstruct(ticks: 9000, arrival: 42.0), 42.0)
     }
 }

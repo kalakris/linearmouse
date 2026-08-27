@@ -5,7 +5,7 @@
 import XCTest
 
 final class TouchStreamCapabilitiesTests: XCTestCase {
-    /// The Go60's actual feature report: protocol v2, right pad present,
+    /// The Go60's legacy feature report: protocol v2, right pad present,
     /// 38 counts/mm, rotate-90 + y-invert, 2047x1535.
     private static let go60Report: [UInt8] = [
         0x02, // version
@@ -14,6 +14,24 @@ final class TouchStreamCapabilitiesTests: XCTestCase {
         0x05, // orientation: bit0 rotate-90, bit2 y-invert
         0xFF, 0x07, // x-max 2047
         0xFF, 0x05 // y-max 1535
+    ]
+
+    /// The same device described by a protocol v3 feature report: header +
+    /// one populated pad slot (right pad), second slot zeroed.
+    private static let go60ReportV3: [UInt8] = [
+        0x03, // version
+        0x01, // pads present: right pad
+        0x00, // capabilities (mode-gate bit reserved)
+        0x00, // reserved
+        // pad slot 0 (pad_id 0)
+        0x26, // 38 counts/mm
+        0x05, // orientation: bit0 rotate-90, bit2 y-invert
+        0xFF, 0x07, // x-max 2047
+        0xFF, 0x05, // y-max 1535
+        0x01, // max contacts
+        0x00, // reserved
+        // pad slot 1 (unused: only one pad present)
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
     ]
 
     // MARK: - Parsing
@@ -33,6 +51,92 @@ final class TouchStreamCapabilitiesTests: XCTestCase {
         XCTAssertEqual(capabilities.xMax, 2047)
         XCTAssertEqual(capabilities.yMax, 1535)
         XCTAssertTrue(capabilities.isSupported)
+
+        // v2 maps its single geometry to a single-slot equivalent.
+        XCTAssertEqual(capabilities.pads.count, 1)
+        XCTAssertEqual(capabilities.pads[0]?.maxContacts, 1)
+        XCTAssertEqual(capabilities.pads[0]?.xMax, 2047)
+    }
+
+    func testParsesGo60V3FeatureReport() {
+        guard let capabilities = TouchStreamCapabilities.parse(reportBytes: Self.go60ReportV3) else {
+            XCTFail("Expected the v3 feature report to parse")
+            return
+        }
+
+        XCTAssertEqual(capabilities.version, 3)
+        XCTAssertEqual(capabilities.padsPresent, 0x01)
+        XCTAssertEqual(capabilities.capabilityBits, 0)
+        XCTAssertTrue(capabilities.isSupported)
+
+        XCTAssertEqual(capabilities.pads.count, 1)
+        let pad = capabilities.pads[0]
+        XCTAssertEqual(pad?.countsPerMM, 38)
+        XCTAssertEqual(pad?.rotate90, true)
+        XCTAssertEqual(pad?.invertX, false)
+        XCTAssertEqual(pad?.invertY, true)
+        XCTAssertEqual(pad?.xMax, 2047)
+        XCTAssertEqual(pad?.yMax, 1535)
+        XCTAssertEqual(pad?.maxContacts, 1)
+
+        // The primary-pad conveniences (engine configuration inputs) must
+        // see the same geometry as the v2 report — same device, same
+        // derived axis and direction.
+        XCTAssertEqual(capabilities.countsPerMM, 38)
+        XCTAssertTrue(capabilities.rotate90)
+        XCTAssertTrue(capabilities.invertY)
+        XCTAssertEqual(capabilities.xMax, 2047)
+        XCTAssertEqual(capabilities.yMax, 1535)
+        XCTAssertEqual(capabilities.scrollAxis, .x)
+        XCTAssertFalse(capabilities.orientationScrollInverted)
+    }
+
+    func testParsesV3TwoPadSlotsInAscendingPadIDOrder() {
+        var report = Self.go60ReportV3
+        report[1] = 0x03 // both pads present
+        // Populate slot 1 (pad_id 1) with a distinct geometry.
+        report[12] = 0x20 // 32 counts/mm
+        report[13] = 0x01 // rotate-90 only
+        report[14] = 0x00
+        report[15] = 0x04 // x-max 1024
+        report[16] = 0x00
+        report[17] = 0x03 // y-max 768
+        report[18] = 0x02 // max contacts 2
+
+        guard let capabilities = TouchStreamCapabilities.parse(reportBytes: report) else {
+            XCTFail("Expected the two-pad v3 feature report to parse")
+            return
+        }
+
+        XCTAssertEqual(capabilities.pads.count, 2)
+        XCTAssertEqual(capabilities.pads[0]?.xMax, 2047)
+        XCTAssertEqual(capabilities.pads[1]?.countsPerMM, 32)
+        XCTAssertEqual(capabilities.pads[1]?.rotate90, true)
+        XCTAssertEqual(capabilities.pads[1]?.invertY, false)
+        XCTAssertEqual(capabilities.pads[1]?.xMax, 1024)
+        XCTAssertEqual(capabilities.pads[1]?.yMax, 768)
+        XCTAssertEqual(capabilities.pads[1]?.maxContacts, 2)
+
+        // The primary pad (the scroll pad) is still pad 0.
+        XCTAssertEqual(capabilities.xMax, 2047)
+    }
+
+    /// A v3 report advertising only the left pad still exposes it through
+    /// `primaryPad` (slots describe present pads in ascending pad_id order,
+    /// so the first slot is pad 1 here).
+    func testV3LeftPadOnlyUsesFirstSlot() {
+        var report = Self.go60ReportV3
+        report[1] = 0x02 // pads present: left pad only
+
+        guard let capabilities = TouchStreamCapabilities.parse(reportBytes: report) else {
+            XCTFail("Expected the left-pad-only v3 feature report to parse")
+            return
+        }
+
+        XCTAssertEqual(capabilities.pads.count, 1)
+        XCTAssertNil(capabilities.pads[0])
+        XCTAssertEqual(capabilities.pads[1]?.xMax, 2047)
+        XCTAssertEqual(capabilities.primaryPad?.xMax, 2047)
     }
 
     func testParsesOrientationBitsIndividually() {
@@ -61,10 +165,16 @@ final class TouchStreamCapabilitiesTests: XCTestCase {
         XCTAssertNil(TouchStreamCapabilities.parse(reportBytes: []))
         XCTAssertNil(TouchStreamCapabilities.parse(reportBytes: [0x02]))
         XCTAssertNil(TouchStreamCapabilities.parse(reportBytes: Array(Self.go60Report.dropLast())))
+        // A v3 report must carry the full 20-byte layout; the v2 length is
+        // short for it.
+        XCTAssertNil(TouchStreamCapabilities.parse(reportBytes: Array(Self.go60ReportV3.dropLast())))
+        var v3AtV2Length = Self.go60Report
+        v3AtV2Length[0] = 0x03
+        XCTAssertNil(TouchStreamCapabilities.parse(reportBytes: v3AtV2Length))
     }
 
     func testRejectsUnsupportedVersions() {
-        var report = Self.go60Report
+        var report = Self.go60ReportV3
 
         report[0] = 0x00
         XCTAssertNil(TouchStreamCapabilities.parse(reportBytes: report))
@@ -74,7 +184,8 @@ final class TouchStreamCapabilitiesTests: XCTestCase {
         report[0] = 0x01
         XCTAssertNil(TouchStreamCapabilities.parse(reportBytes: report))
 
-        report[0] = 0x03
+        // Anything newer than v3 is treated as non-streaming, not guessed at.
+        report[0] = 0x04
         XCTAssertNil(TouchStreamCapabilities.parse(reportBytes: report))
 
         report[0] = 0xFF
@@ -87,11 +198,20 @@ final class TouchStreamCapabilitiesTests: XCTestCase {
         XCTAssertEqual(capabilities?.version, 2)
         XCTAssertEqual(capabilities?.xMax, 2047)
         XCTAssertEqual(capabilities?.invertY, true)
+
+        let prefixedV3 = [UInt8(0x04)] + Self.go60ReportV3
+        let capabilitiesV3 = TouchStreamCapabilities.parse(reportBytes: prefixedV3)
+        XCTAssertEqual(capabilitiesV3?.version, 3)
+        XCTAssertEqual(capabilitiesV3?.xMax, 2047)
+        XCTAssertEqual(capabilitiesV3?.invertY, true)
     }
 
     func testIgnoresTrailingPadding() {
         let padded = Self.go60Report + [0x00, 0x00]
         XCTAssertEqual(TouchStreamCapabilities.parse(reportBytes: padded)?.yMax, 1535)
+
+        let paddedV3 = Self.go60ReportV3 + [0x00, 0x00]
+        XCTAssertEqual(TouchStreamCapabilities.parse(reportBytes: paddedV3)?.yMax, 1535)
     }
 
     // MARK: - Orientation → axis/direction derivation
