@@ -558,16 +558,20 @@ final class TouchStreamFrameTests: XCTestCase {
         XCTAssertNil(TouchStreamFrame(reportBytes: [0, 0, 0, 0, 0, 0], protocolVersion: 3, timestamp: 0))
     }
 
-    /// The feature report is the version authority: a validated-v3 device
-    /// never legitimately emits 7-byte frames, so a frame long enough for v2
-    /// but short of the v3 layout is malformed and rejected rather than
-    /// reinterpreted with the v2 layout.
-    func testRejectsV3VersionFrameWithOnlyV2Length() {
-        XCTAssertNil(TouchStreamFrame(
+    /// A v3 device's frame that is long enough for v2 but short of the v3
+    /// layout parses with the v2 layout (defensive length fallback) instead
+    /// of being dropped.
+    func testV3VersionWithV2LengthFallsBackToV2Layout() {
+        let frame = TouchStreamFrame(
             reportBytes: [0x00, 0x03, 0x04, 0x01, 0x02, 0x2A, 0x03],
             protocolVersion: 3,
             timestamp: 0
-        ))
+        )
+        XCTAssertEqual(frame?.x, 1027)
+        XCTAssertEqual(frame?.y, 513)
+        XCTAssertEqual(frame?.touched, true)
+        XCTAssertNil(frame?.seq)
+        XCTAssertNil(frame?.deviceTimestampTicks)
     }
 
     func testIgnoresTrailingPadding() {
