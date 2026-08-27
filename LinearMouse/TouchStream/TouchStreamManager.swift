@@ -112,10 +112,7 @@ final class TouchStreamManager: ObservableObject {
     // Event-thread state. Only ever touched from EventThread blocks.
     private let engine = TouchScrollEngine()
     private let poster = TouchStreamScrollPoster()
-    private let tapRecognizer = TouchTapRecognizer()
-    private let clickPoster = TouchStreamClickPoster()
     private var scrollingEnabled = false
-    private var tapToClickEnabled = false
     private var momentumTimer: EventThreadTimer?
 
     init(
@@ -244,13 +241,13 @@ final class TouchStreamManager: ObservableObject {
         }
 
         guard let streamDevice = streamDevices.first else {
-            setEventThreadConfiguration(scrolling: nil, tapToClick: nil)
+            setEventThreadConfiguration(scrolling: nil)
             return
         }
 
         let scrolling = resolvedScrollingConfiguration(for: streamDevice)
         guard let touchStream = scrolling.$touchStream, touchStream.isEnabled else {
-            setEventThreadConfiguration(scrolling: nil, tapToClick: nil)
+            setEventThreadConfiguration(scrolling: nil)
             return
         }
 
@@ -278,17 +275,7 @@ final class TouchStreamManager: ObservableObject {
             )
         )
 
-        // DEPRECATED: firmware now owns tap-to-click; this stays for older
-        // firmware and defaults to off.
-        let tapToClick = touchStream.tapToClick ?? .init()
-        let tapConfig: TouchTapRecognizer.Config? = touchStream.isTapToClickEnabled
-            ? .init(
-                maxDuration: tapToClick.resolvedMaxDuration,
-                maxMovementCounts: tapToClick.resolvedMaxMovement
-            )
-            : nil
-
-        setEventThreadConfiguration(scrolling: config, tapToClick: tapConfig)
+        setEventThreadConfiguration(scrolling: config)
     }
 
     /// The merged `scrolling` configuration for the scheme matching the
@@ -341,10 +328,7 @@ final class TouchStreamManager: ObservableObject {
         return configuration.matchScheme(withDeviceMatcher: matcher).scrolling
     }
 
-    private func setEventThreadConfiguration(
-        scrolling: TouchScrollEngine.Config?,
-        tapToClick: TouchTapRecognizer.Config?
-    ) {
+    private func setEventThreadConfiguration(scrolling: TouchScrollEngine.Config?) {
         EventThread.shared.perform { [weak self] in
             guard let self else {
                 return
@@ -360,13 +344,6 @@ final class TouchStreamManager: ObservableObject {
                 poster.closeGestureSeriesIfNeeded()
                 momentumTimer?.invalidate()
                 momentumTimer = nil
-            }
-
-            tapToClickEnabled = tapToClick != nil
-            if let tapToClick {
-                tapRecognizer.config = tapToClick
-            } else {
-                tapRecognizer.reset()
             }
         }
     }
@@ -608,21 +585,12 @@ final class TouchStreamManager: ObservableObject {
     // MARK: - Event-thread processing
 
     private func process(frame: TouchStreamFrame) {
-        guard scrollingEnabled || tapToClickEnabled else {
+        guard scrollingEnabled else {
             return
         }
 
-        if scrollingEnabled {
-            for event in engine.handle(frame: frame) {
-                poster.post(event)
-            }
-        }
-
-        // Tap-to-click watches the same frame stream but is entirely
-        // independent of the scroll engine: it recognizes pointer-context
-        // touches, which the engine ignores, and vice versa.
-        if tapToClickEnabled, let tap = tapRecognizer.handle(frame: frame) {
-            clickPoster.post(tap)
+        for event in engine.handle(frame: frame) {
+            poster.post(event)
         }
 
         updateMomentumTimer()
@@ -666,7 +634,6 @@ final class TouchStreamManager: ObservableObject {
                 poster.post(event)
             }
             poster.closeGestureSeriesIfNeeded()
-            tapRecognizer.reset()
             momentumTimer?.invalidate()
             momentumTimer = nil
         }

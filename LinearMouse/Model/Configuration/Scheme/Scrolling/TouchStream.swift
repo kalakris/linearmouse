@@ -40,11 +40,6 @@ extension Scheme.Scrolling {
         /// Momentum (coasting after lift-off) tuning. Absent = defaults.
         var momentum: Momentum?
 
-        /// DEPRECATED: host-side tap-to-click for the pointer context.
-        /// Firmware now owns tap-to-click; this remains only for older
-        /// firmware and defaults to off.
-        var tapToClick: TapToClick?
-
         /// Apple-trackpad-style scroll ballistics: slow drags scroll with
         /// sub-linear precision, fast flicks travel super-linearly.
         ///
@@ -54,8 +49,8 @@ extension Scheme.Scrolling {
         /// Cirque counts per second. `exponent` 0 makes the curve the
         /// identity (plain linear scrolling).
         struct Acceleration: Codable, Equatable {
-            /// Whether the velocity-dependent gain is active. Like
-            /// `tapToClick.enabled`, this defaults to `false` even when the
+            /// Whether the velocity-dependent gain is active. Unlike the
+            /// parent `enabled`, this defaults to `false` even when the
             /// `acceleration` object is present.
             ///
             /// The UI exposes a single "Scroll acceleration" slider bound to
@@ -120,43 +115,18 @@ extension Scheme.Scrolling {
             }
         }
 
-        /// DEPRECATED: tap-to-click on pointer-context frames (touched,
-        /// scroll mode off). The firmware now implements tap-to-click itself;
-        /// keep this off unless running older firmware.
-        struct TapToClick: Codable, Equatable {
-            /// Whether tap-to-click is active. Unlike the parent `enabled`,
-            /// this defaults to `false` even when the object is present.
-            var enabled: Bool?
-
-            /// Maximum touch duration in milliseconds for a touch to count as
-            /// a tap.
-            var maxDurationMs: Decimal?
-
-            /// Maximum movement in raw Cirque counts (max of |Δx|, |Δy| over
-            /// the whole touch) for a touch to count as a tap.
-            var maxMovement: Decimal?
-
-            init(enabled: Bool? = nil, maxDurationMs: Decimal? = nil, maxMovement: Decimal? = nil) {
-                self.enabled = enabled
-                self.maxDurationMs = maxDurationMs
-                self.maxMovement = maxMovement
-            }
-        }
-
         init() {}
 
         init(
             enabled: Bool? = nil,
             scale: Decimal? = nil,
             acceleration: Acceleration? = nil,
-            momentum: Momentum? = nil,
-            tapToClick: TapToClick? = nil
+            momentum: Momentum? = nil
         ) {
             self.enabled = enabled
             self.scale = scale
             self.acceleration = acceleration
             self.momentum = momentum
-            self.tapToClick = tapToClick
         }
     }
 }
@@ -171,10 +141,6 @@ extension Scheme.Scrolling.TouchStream {
 
     var resolvedScale: Double {
         (scale?.asTruncatedDouble ?? Self.defaultScale).clamped(to: Self.scaleRange)
-    }
-
-    var isTapToClickEnabled: Bool {
-        tapToClick?.isEnabled ?? false
     }
 
     func merge(into touchStream: inout Self) {
@@ -199,14 +165,6 @@ extension Scheme.Scrolling.TouchStream {
                 touchStream.momentum = momentum
             } else {
                 momentum.merge(into: &touchStream.momentum!)
-            }
-        }
-
-        if let tapToClick {
-            if touchStream.tapToClick == nil {
-                touchStream.tapToClick = tapToClick
-            } else {
-                tapToClick.merge(into: &touchStream.tapToClick!)
             }
         }
     }
@@ -317,37 +275,3 @@ extension Scheme.Scrolling.TouchStream.Momentum {
     }
 }
 
-extension Scheme.Scrolling.TouchStream.TapToClick {
-    static let maxDurationMsRange: ClosedRange<Double> = 50 ... 1000
-    static let defaultMaxDurationMs = 180.0
-
-    static let maxMovementRange: ClosedRange<Double> = 1 ... 500
-    static let defaultMaxMovement = 30.0
-
-    var isEnabled: Bool {
-        enabled ?? false
-    }
-
-    var resolvedMaxDuration: TimeInterval {
-        (maxDurationMs?.asTruncatedDouble ?? Self.defaultMaxDurationMs)
-            .clamped(to: Self.maxDurationMsRange) / 1000
-    }
-
-    var resolvedMaxMovement: Double {
-        (maxMovement?.asTruncatedDouble ?? Self.defaultMaxMovement).clamped(to: Self.maxMovementRange)
-    }
-
-    func merge(into tapToClick: inout Self) {
-        if let enabled {
-            tapToClick.enabled = enabled
-        }
-
-        if let maxDurationMs {
-            tapToClick.maxDurationMs = maxDurationMs
-        }
-
-        if let maxMovement {
-            tapToClick.maxMovement = maxMovement
-        }
-    }
-}

@@ -45,7 +45,6 @@ final class TouchStreamConfigurationTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(touchStream.momentum?.resolvedDecayTimeConstant), 0.83, accuracy: 1e-9)
         XCTAssertEqual(touchStream.momentum?.resolvedStartThreshold, 100)
         XCTAssertEqual(touchStream.momentum?.resolvedMaxSpeed, 8000)
-        XCTAssertFalse(touchStream.isTapToClickEnabled)
     }
 
     /// The old top-level `touchStream` key is gone; Codable must simply
@@ -67,16 +66,23 @@ final class TouchStreamConfigurationTests: XCTestCase {
     }
 
     /// The removed `axis`/`invert` keys (superseded by feature-report
-    /// auto-configuration) and the removed `direction` key (superseded by
-    /// the scheme's generic `scrolling.reverse` toggle) are unknown keys
-    /// inside the scheme-scoped object and must be ignored as well.
-    func testIgnoresRemovedAxisInvertAndDirectionKeys() throws {
+    /// auto-configuration), the removed `direction` key (superseded by
+    /// the scheme's generic `scrolling.reverse` toggle), and the removed
+    /// `tapToClick` object (superseded by firmware tap-to-click) are unknown
+    /// keys inside the scheme-scoped object and must be ignored as well.
+    func testIgnoresRemovedTouchStreamKeys() throws {
         let configuration = try Configuration.load(from: """
         {
             "schemes": [
                 {
                     "scrolling": {
-                        "touchStream": { "scale": 0.5, "axis": "x", "invert": true, "direction": "inverted" }
+                        "touchStream": {
+                            "scale": 0.5,
+                            "axis": "x",
+                            "invert": true,
+                            "direction": "inverted",
+                            "tapToClick": { "enabled": true }
+                        }
                     }
                 }
             ]
@@ -89,13 +95,13 @@ final class TouchStreamConfigurationTests: XCTestCase {
         // The legacy key must not survive a round-trip either.
         let dumped = try XCTUnwrap(String(data: configuration.dump(), encoding: .utf8))
         XCTAssertFalse(dumped.contains("direction"))
+        XCTAssertFalse(dumped.contains("tapToClick"))
     }
 
     func testDefaults() {
         let touchStream = Scheme.Scrolling.TouchStream()
         XCTAssertTrue(touchStream.isEnabled)
         XCTAssertEqual(touchStream.resolvedScale, 0.25)
-        XCTAssertFalse(touchStream.isTapToClickEnabled)
 
         let momentum = Scheme.Scrolling.TouchStream.Momentum()
         XCTAssertEqual(momentum.resolvedDecayTimeConstant, 0.83)

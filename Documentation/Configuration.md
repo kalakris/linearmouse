@@ -162,9 +162,6 @@ disconnects or the feature is disabled.
   "Scroll inertia" slider). Advanced, JSON-only: `startThreshold` (minimum lift-off speed in
   points/s to coast at all, default 100) and `maxSpeed` (cap on the seed velocity in points/s,
   default 8000).
-- `tapToClick` — **deprecated**. Host-side tap-to-click for pointer-context touches. The firmware
-  now implements tap-to-click itself, so leave this off (the default) unless running older
-  firmware — otherwise taps double-click.
 
 Touch-stream settings are direction-agnostic (the axis comes from the pad orientation), so unlike
 other scrolling settings there are no `vertical`/`horizontal` variants.
