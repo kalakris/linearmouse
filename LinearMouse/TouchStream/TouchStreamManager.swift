@@ -601,6 +601,18 @@ final class TouchStreamManager: ObservableObject {
         bytes: UnsafeMutablePointer<UInt8>,
         length: CFIndex
     ) {
+        // Only touch frames (report ID 0x04) are ours. Depending on transport
+        // and collection splitting — over BLE in particular — macOS can
+        // deliver *other* input reports of the same HID service to this
+        // matched device (e.g. ZMK's 9-byte mouse report), which would parse
+        // as a phantom touch frame since `TouchStreamFrame` accepts any
+        // payload of sufficient length. Checked first: the integer compare
+        // is free and this callback runs at ~100 Hz, while the
+        // verified-device gate below takes a lock and scans.
+        guard reportID == TouchStreamFrame.reportID else {
+            return
+        }
+
         // Hard gate: only devices whose feature report passed validation are
         // stream sources. Matching is by usage pair alone, so a foreign
         // vendor collection can deliver reports here — and even the real
@@ -610,31 +622,16 @@ final class TouchStreamManager: ObservableObject {
             return
         }
 
-        // Only touch frames (report ID 0x04) are ours. Depending on transport
-        // and collection splitting — over BLE in particular — macOS can
-        // deliver *other* input reports of the same HID service to this
-        // matched device (e.g. ZMK's 9-byte mouse report), which would parse
-        // as a phantom touch frame since `TouchStreamFrame` accepts any
-        // payload of sufficient length.
-        guard reportID == TouchStreamFrame.reportID else {
-            return
-        }
-
-        guard length > 0 else {
-            return
-        }
-
-        var payload = [UInt8](UnsafeBufferPointer(start: bytes, count: length))
-
-        // Defensive: some transports have been observed to prepend the report
-        // ID byte. If the payload is one byte longer than the contract, drop
-        // the leading byte.
-        if payload.count == TouchStreamFrame.payloadLength(forProtocolVersion: protocolVersion) + 1 {
-            payload.removeFirst()
-        }
+        // Parse straight out of the callback's buffer — no per-report heap
+        // allocation. Defensive: some transports have been observed to
+        // prepend the report ID byte; if the payload is one byte longer
+        // than the contract, parsing skips the leading byte.
+        let payload = UnsafeRawBufferPointer(start: bytes, count: length)
+        let offset = length == TouchStreamFrame.payloadLength(forProtocolVersion: protocolVersion) + 1 ? 1 : 0
 
         guard let frame = TouchStreamFrame(
             reportBytes: payload,
+            offset: offset,
             protocolVersion: protocolVersion,
             timestamp: ProcessInfo.processInfo.systemUptime
         ) else {
