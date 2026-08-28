@@ -11,6 +11,10 @@ on:
 
 jobs:
   build:
+    # The full pipeline lints, tests, and packages a SIGNED release dmg,
+    # which needs the upstream repo's signing secrets. On forks it always
+    # dies at exportArchive — build-unsigned.yml covers them instead.
+    if: github.repository == 'linearmouse/linearmouse'
     runs-on: macos-26
     env:
       APPLE_ID: ${{ secrets.APPLE_ID }}

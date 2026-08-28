@@ -1,0 +1,31 @@
+name: Build unsigned app
+on:
+  push:
+    branches:
+      - main
+      - inputscale
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-26
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Configure
+        run: |
+          ./Scripts/configure-code-signing
+          ./Scripts/configure-version
+      - name: Build (unsigned)
+        run: |
+          xcodebuild archive -project LinearMouse.xcodeproj -scheme LinearMouse \
+            -archivePath build/LinearMouse.xcarchive \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= DEVELOPMENT_TEAM=
+      - name: Zip app
+        run: ditto -c -k --keepParent build/LinearMouse.xcarchive/Products/Applications/LinearMouse.app build/LinearMouse.app.zip
+      - name: Upload app
+        uses: actions/upload-artifact@v4
+        with:
+          name: LinearMouse-app
+          path: build/LinearMouse.app.zip
+          retention-days: 7
