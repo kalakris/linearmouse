@@ -96,13 +96,21 @@ final class TouchStreamManager: ObservableObject {
     /// availability in the Scrolling settings).
     @Published private(set) var streamingDeviceIdentities: [HIDPhysicalDeviceIdentity] = []
 
-    // Cross-thread mirrors of the verified-device state: the identities for
-    // the event-tap (wheel suppression) path, the device handles (plus their
-    // validated protocol version, which selects the frame layout) for the
-    // input-report path's validation gate.
-    private let streamingDeviceIdentitiesLock = NSLock()
-    private var lockedStreamingDeviceIdentities: [HIDPhysicalDeviceIdentity] = []
-    private var lockedStreamDeviceHandles: [(device: IOHIDDevice, protocolVersion: Int)] = []
+    /// A verified streaming device as mirrored for cross-thread readers,
+    /// who project what they need: the identity for the event-tap (wheel
+    /// suppression) path, the device handle plus its validated protocol
+    /// version (which selects the frame layout) for the input-report path's
+    /// validation gate.
+    private struct VerifiedDevice {
+        var device: IOHIDDevice
+        var identity: HIDPhysicalDeviceIdentity
+        var protocolVersion: Int
+    }
+
+    // Cross-thread mirror of the verified-device state, updated whole under
+    // the lock.
+    private let verifiedDevicesLock = NSLock()
+    private var lockedVerifiedDevices: [VerifiedDevice] = []
 
     /// Reads the system-wide Natural Scrolling preference. Injectable so the
     /// direction derivation stays testable without global state; the default
@@ -177,9 +185,9 @@ final class TouchStreamManager: ObservableObject {
             return false
         }
 
-        streamingDeviceIdentitiesLock.lock()
-        defer { streamingDeviceIdentitiesLock.unlock() }
-        return lockedStreamingDeviceIdentities.contains { $0.isSamePhysicalDevice(as: identity) }
+        verifiedDevicesLock.lock()
+        defer { verifiedDevicesLock.unlock() }
+        return lockedVerifiedDevices.contains { $0.identity.isSamePhysicalDevice(as: identity) }
     }
 
     /// Whether `device` (a pointer device) belongs to the same physical
@@ -548,13 +556,15 @@ final class TouchStreamManager: ObservableObject {
     }
 
     private func updateStreamingDeviceIdentities() {
-        let identities = streamDevices.map(\.identity)
-        let handles = streamDevices.map { (device: $0.device, protocolVersion: $0.capabilities.version) }
+        let verified = streamDevices.map {
+            VerifiedDevice(device: $0.device, identity: $0.identity, protocolVersion: $0.capabilities.version)
+        }
 
-        streamingDeviceIdentitiesLock.lock()
-        lockedStreamingDeviceIdentities = identities
-        lockedStreamDeviceHandles = handles
-        streamingDeviceIdentitiesLock.unlock()
+        verifiedDevicesLock.lock()
+        lockedVerifiedDevices = verified
+        verifiedDevicesLock.unlock()
+
+        let identities = streamDevices.map(\.identity)
 
         if streamingDeviceIdentities != identities {
             streamingDeviceIdentities = identities
@@ -588,9 +598,9 @@ final class TouchStreamManager: ObservableObject {
     /// report on the run-loop thread. The version selects the frame layout
     /// (v2: 7 bytes, v3: 11 bytes with contact_id/seq/timestamp).
     private func verifiedProtocolVersion(of device: IOHIDDevice) -> Int? {
-        streamingDeviceIdentitiesLock.lock()
-        defer { streamingDeviceIdentitiesLock.unlock() }
-        return lockedStreamDeviceHandles.first { $0.device === device }?.protocolVersion
+        verifiedDevicesLock.lock()
+        defer { verifiedDevicesLock.unlock() }
+        return lockedVerifiedDevices.first { $0.device === device }?.protocolVersion
     }
 
     /// Called by the HID input-report callback on the run loop the manager

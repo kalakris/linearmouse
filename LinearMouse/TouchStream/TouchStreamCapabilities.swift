@@ -133,7 +133,7 @@ struct TouchStreamCapabilities: Equatable {
             capabilityBits = reportBytes[2]
             // Slots describe present pads in ascending pad_id order.
             var slotOffset = 4
-            for padID: UInt8 in 0 ..< 8 where padsPresent & (1 << padID) != 0 {
+            for padID in Self.presentPadIDs(padsPresent) {
                 guard slotOffset + 8 <= reportBytes.count else {
                     break // more pads advertised than slots carried
                 }
@@ -144,10 +144,10 @@ struct TouchStreamCapabilities: Equatable {
             capabilityBits = 0
             // v2 carries one geometry for the whole device; map it to every
             // present pad (single-slot equivalent). The v2 geometry bytes at
-            // offset 2 share the slot layout's first six bytes.
-            var single = Pad(slotBytes: reportBytes[2 ..< 8])
-            single.maxContacts = 1
-            for padID: UInt8 in 0 ..< 8 where padsPresent & (1 << padID) != 0 {
+            // offset 2 share the slot layout's first six bytes; max contacts
+            // defaults to 1, which is exactly what v2 implies.
+            let single = Pad(slotBytes: reportBytes[2 ..< 8])
+            for padID in Self.presentPadIDs(padsPresent) {
                 pads[padID] = single
             }
         }
@@ -178,10 +178,15 @@ struct TouchStreamCapabilities: Equatable {
             yMax: yMax
         )
         var pads: [UInt8: Pad] = [:]
-        for padID: UInt8 in 0 ..< 8 where padsPresent & (1 << padID) != 0 {
+        for padID in Self.presentPadIDs(padsPresent) {
             pads[padID] = pad
         }
         self.pads = pads
+    }
+
+    /// The pad_ids set in a pads-present bitmask, in ascending order.
+    private static func presentPadIDs(_ padsPresent: UInt8) -> [UInt8] {
+        ((0 as UInt8) ..< 8).filter { padsPresent & (1 << $0) != 0 }
     }
 
     var isSupported: Bool {
