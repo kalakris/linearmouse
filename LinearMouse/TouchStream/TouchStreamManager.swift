@@ -599,8 +599,8 @@ final class TouchStreamManager: ObservableObject {
 
     /// The validated protocol version of `device`, or `nil` if it has not
     /// passed feature-report validation. Thread-safe; called per input
-    /// report on the run-loop thread. The version selects the frame layout
-    /// (v2: 7 bytes, v3: 11 bytes with contact_id/seq/timestamp).
+    /// report on the run-loop thread. The version is retained for future
+    /// protocol bumps; today validation admits v3 alone.
     private func verifiedProtocolVersion(of device: IOHIDDevice) -> Int? {
         verifiedDevicesLock.lock()
         defer { verifiedDevicesLock.unlock() }
@@ -631,8 +631,7 @@ final class TouchStreamManager: ObservableObject {
         // stream sources. Matching is by usage pair alone, so a foreign
         // vendor collection can deliver reports here — and even the real
         // device's reports must wait until its capabilities are verified.
-        // The validated version also selects the frame layout.
-        guard let protocolVersion = verifiedProtocolVersion(of: device) else {
+        guard verifiedProtocolVersion(of: device) != nil else {
             return
         }
 
@@ -641,12 +640,11 @@ final class TouchStreamManager: ObservableObject {
         // prepend the report ID byte; if the payload is one byte longer
         // than the contract, parsing skips the leading byte.
         let payload = UnsafeRawBufferPointer(start: bytes, count: length)
-        let offset = length == TouchStreamFrame.payloadLength(forProtocolVersion: protocolVersion) + 1 ? 1 : 0
+        let offset = length == TouchStreamFrame.payloadLength + 1 ? 1 : 0
 
         guard let frame = TouchStreamFrame(
             reportBytes: payload,
             offset: offset,
-            protocolVersion: protocolVersion,
             timestamp: ProcessInfo.processInfo.systemUptime
         ) else {
             // Malformed/short report: drop silently (never crash).
@@ -693,7 +691,7 @@ final class TouchStreamManager: ObservableObject {
         // The host arrival time, before the v3 device-clock rewrite below.
         let arrival = frame.timestamp
 
-        // seq gap accounting (v3): the firmware's BLE send queue drops
+        // seq gap accounting: the firmware's BLE send queue drops
         // oldest under pressure; device timestamps keep velocity correct
         // across a gap, so this is diagnostic only.
         if let seq = frame.seq {
@@ -714,11 +712,11 @@ final class TouchStreamManager: ObservableObject {
             state.lastSeq = seq
         }
 
-        // v3: replace the arrival timestamp with the reconstructed
-        // device-side sample time, so the engine's velocity math (per-frame
-        // dt, lift-off velocity window) sees the true ~100 Hz cadence
-        // instead of BLE connection-interval batches. v2 frames carry no
-        // device timestamp and keep the arrival-time behavior unchanged.
+        // Replace the arrival timestamp with the reconstructed device-side
+        // sample time, so the engine's velocity math (per-frame dt,
+        // lift-off velocity window) sees the true ~100 Hz cadence instead
+        // of BLE connection-interval batches. Synthesized frames carry no
+        // device timestamp and keep the arrival-time behavior.
         if let ticks = frame.deviceTimestampTicks {
             frame.timestamp = state.clock.reconstruct(
                 ticks: ticks,
@@ -811,8 +809,8 @@ final class TouchStreamManager: ObservableObject {
             elapsed * 1000
         )
 
-        // Timestamped on the engine timeline (device time for v3, arrival
-        // time for v2) as of now, the moment the silence was declared. The
+        // Timestamped on the engine timeline (reconstructed device time)
+        // as of now, the moment the silence was declared. The
         // engine ignores coordinates on release frames, so only pad, flags
         // and the timestamp matter.
         process(frame: TouchStreamFrame(

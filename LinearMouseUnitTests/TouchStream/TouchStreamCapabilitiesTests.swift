@@ -5,19 +5,9 @@
 import XCTest
 
 final class TouchStreamCapabilitiesTests: XCTestCase {
-    /// The Go60's legacy feature report: protocol v2, right pad present,
-    /// 38 counts/mm, rotate-90 + y-invert, 2047x1535.
-    private static let go60Report: [UInt8] = [
-        0x02, // version
-        0x01, // pads present: right pad
-        0x26, // 38 counts/mm
-        0x05, // orientation: bit0 rotate-90, bit2 y-invert
-        0xFF, 0x07, // x-max 2047
-        0xFF, 0x05 // y-max 1535
-    ]
-
-    /// The same device described by a protocol v3 feature report: header +
-    /// one populated pad slot (right pad), second slot zeroed.
+    /// The Go60's feature report: protocol v3, right pad present,
+    /// 38 counts/mm, rotate-90 + y-invert, 2047x1535 — header + one
+    /// populated pad slot (right pad), second slot zeroed.
     private static let go60ReportV3: [UInt8] = [
         0x03, // version
         0x01, // pads present: right pad
@@ -35,28 +25,6 @@ final class TouchStreamCapabilitiesTests: XCTestCase {
     ]
 
     // MARK: - Parsing
-
-    func testParsesGo60FeatureReport() {
-        guard let capabilities = TouchStreamCapabilities.parse(reportBytes: Self.go60Report) else {
-            XCTFail("Expected the Go60 feature report to parse")
-            return
-        }
-
-        XCTAssertEqual(capabilities.version, 2)
-        XCTAssertEqual(capabilities.padsPresent, 0x01)
-        XCTAssertEqual(capabilities.countsPerMM, 38)
-        XCTAssertTrue(capabilities.rotate90)
-        XCTAssertFalse(capabilities.invertX)
-        XCTAssertTrue(capabilities.invertY)
-        XCTAssertEqual(capabilities.xMax, 2047)
-        XCTAssertEqual(capabilities.yMax, 1535)
-        XCTAssertTrue(capabilities.isSupported)
-
-        // v2 maps its single geometry to a single-slot equivalent.
-        XCTAssertEqual(capabilities.pads.count, 1)
-        XCTAssertEqual(capabilities.pads[0]?.maxContacts, 1)
-        XCTAssertEqual(capabilities.pads[0]?.xMax, 2047)
-    }
 
     func testParsesGo60V3FeatureReport() {
         guard let capabilities = TouchStreamCapabilities.parse(reportBytes: Self.go60ReportV3) else {
@@ -79,9 +47,8 @@ final class TouchStreamCapabilitiesTests: XCTestCase {
         XCTAssertEqual(pad?.yMax, 1535)
         XCTAssertEqual(pad?.maxContacts, 1)
 
-        // The primary-pad conveniences (engine configuration inputs) must
-        // see the same geometry as the v2 report — same device, same
-        // derived axis and direction.
+        // The primary-pad conveniences (engine configuration inputs)
+        // project pad 0's geometry and derive its axis and direction.
         XCTAssertEqual(capabilities.countsPerMM, 38)
         XCTAssertTrue(capabilities.rotate90)
         XCTAssertTrue(capabilities.invertY)
@@ -140,21 +107,21 @@ final class TouchStreamCapabilitiesTests: XCTestCase {
     }
 
     func testParsesOrientationBitsIndividually() {
-        var report = Self.go60Report
+        var report = Self.go60ReportV3
 
-        report[3] = 0x00
+        report[5] = 0x00
         let plain = TouchStreamCapabilities.parse(reportBytes: report)
         XCTAssertEqual(plain?.rotate90, false)
         XCTAssertEqual(plain?.invertX, false)
         XCTAssertEqual(plain?.invertY, false)
 
-        report[3] = 0x02
+        report[5] = 0x02
         let invertedX = TouchStreamCapabilities.parse(reportBytes: report)
         XCTAssertEqual(invertedX?.rotate90, false)
         XCTAssertEqual(invertedX?.invertX, true)
         XCTAssertEqual(invertedX?.invertY, false)
 
-        report[3] = 0x07
+        report[5] = 0x07
         let all = TouchStreamCapabilities.parse(reportBytes: report)
         XCTAssertEqual(all?.rotate90, true)
         XCTAssertEqual(all?.invertX, true)
@@ -163,14 +130,13 @@ final class TouchStreamCapabilitiesTests: XCTestCase {
 
     func testRejectsShortReports() {
         XCTAssertNil(TouchStreamCapabilities.parse(reportBytes: []))
-        XCTAssertNil(TouchStreamCapabilities.parse(reportBytes: [0x02]))
-        XCTAssertNil(TouchStreamCapabilities.parse(reportBytes: Array(Self.go60Report.dropLast())))
-        // A v3 report must carry the full 20-byte layout; the v2 length is
-        // short for it.
+        XCTAssertNil(TouchStreamCapabilities.parse(reportBytes: [0x03]))
         XCTAssertNil(TouchStreamCapabilities.parse(reportBytes: Array(Self.go60ReportV3.dropLast())))
-        var v3AtV2Length = Self.go60Report
-        v3AtV2Length[0] = 0x03
-        XCTAssertNil(TouchStreamCapabilities.parse(reportBytes: v3AtV2Length))
+        // The legacy v2 length (8 bytes) is short for the 20-byte layout
+        // even when the version byte claims v3.
+        XCTAssertNil(TouchStreamCapabilities.parse(
+            reportBytes: [0x03, 0x01, 0x26, 0x05, 0xFF, 0x07, 0xFF, 0x05]
+        ))
     }
 
     func testRejectsUnsupportedVersions() {
@@ -184,6 +150,13 @@ final class TouchStreamCapabilitiesTests: XCTestCase {
         report[0] = 0x01
         XCTAssertNil(TouchStreamCapabilities.parse(reportBytes: report))
 
+        // v2 support was dropped 2026-08-28: it only ever ran on the
+        // pre-release prototype firmware, so no v2 device exists in the
+        // wild. Rollback to the v0-prototype binaries now means
+        // wheel-fallback scrolling only.
+        report[0] = 0x02
+        XCTAssertNil(TouchStreamCapabilities.parse(reportBytes: report))
+
         // Anything newer than v3 is treated as non-streaming, not guessed at.
         report[0] = 0x04
         XCTAssertNil(TouchStreamCapabilities.parse(reportBytes: report))
@@ -193,25 +166,16 @@ final class TouchStreamCapabilitiesTests: XCTestCase {
     }
 
     func testStripsPrependedReportID() {
-        let prefixed = [UInt8(0x04)] + Self.go60Report
+        let prefixed = [UInt8(0x04)] + Self.go60ReportV3
         let capabilities = TouchStreamCapabilities.parse(reportBytes: prefixed)
-        XCTAssertEqual(capabilities?.version, 2)
+        XCTAssertEqual(capabilities?.version, 3)
         XCTAssertEqual(capabilities?.xMax, 2047)
         XCTAssertEqual(capabilities?.invertY, true)
-
-        let prefixedV3 = [UInt8(0x04)] + Self.go60ReportV3
-        let capabilitiesV3 = TouchStreamCapabilities.parse(reportBytes: prefixedV3)
-        XCTAssertEqual(capabilitiesV3?.version, 3)
-        XCTAssertEqual(capabilitiesV3?.xMax, 2047)
-        XCTAssertEqual(capabilitiesV3?.invertY, true)
     }
 
     func testIgnoresTrailingPadding() {
-        let padded = Self.go60Report + [0x00, 0x00]
+        let padded = Self.go60ReportV3 + [0x00, 0x00]
         XCTAssertEqual(TouchStreamCapabilities.parse(reportBytes: padded)?.yMax, 1535)
-
-        let paddedV3 = Self.go60ReportV3 + [0x00, 0x00]
-        XCTAssertEqual(TouchStreamCapabilities.parse(reportBytes: paddedV3)?.yMax, 1535)
     }
 
     // MARK: - Orientation → axis/direction derivation
@@ -226,7 +190,7 @@ final class TouchStreamCapabilitiesTests: XCTestCase {
     /// fingers). If a row fails, the scroll direction or axis has silently
     /// flipped — do not "fix" the test; fix the derivation.
     func testGo60DirectionTruthTable() {
-        guard let capabilities = TouchStreamCapabilities.parse(reportBytes: Self.go60Report) else {
+        guard let capabilities = TouchStreamCapabilities.parse(reportBytes: Self.go60ReportV3) else {
             XCTFail("Expected the Go60 feature report to parse")
             return
         }
@@ -254,7 +218,7 @@ final class TouchStreamCapabilitiesTests: XCTestCase {
     /// increasing raw X produces positive (scroll-up) deltas scaled by
     /// pointsPerCount, and raw Y movement is ignored.
     func testGo60OrientationAnchorDrivesEngineLikeTheValidatedConfig() {
-        guard let capabilities = TouchStreamCapabilities.parse(reportBytes: Self.go60Report) else {
+        guard let capabilities = TouchStreamCapabilities.parse(reportBytes: Self.go60ReportV3) else {
             XCTFail("Expected the Go60 feature report to parse")
             return
         }
@@ -276,7 +240,7 @@ final class TouchStreamCapabilitiesTests: XCTestCase {
     /// flips the baseline: with it set (system preference unchanged), the
     /// same finger motion produces the exactly negated deltas of the anchor.
     func testReverseScrollingFlipsTheAnchorBehavior() {
-        guard let capabilities = TouchStreamCapabilities.parse(reportBytes: Self.go60Report) else {
+        guard let capabilities = TouchStreamCapabilities.parse(reportBytes: Self.go60ReportV3) else {
             XCTFail("Expected the Go60 feature report to parse")
             return
         }
@@ -297,7 +261,7 @@ final class TouchStreamCapabilitiesTests: XCTestCase {
     /// unchanged) produces the same flip: content follows the fingers, so
     /// the anchor motion's deltas come out negated.
     func testSystemNaturalScrollingFlipsTheAnchorBehavior() {
-        guard let capabilities = TouchStreamCapabilities.parse(reportBytes: Self.go60Report) else {
+        guard let capabilities = TouchStreamCapabilities.parse(reportBytes: Self.go60ReportV3) else {
             XCTFail("Expected the Go60 feature report to parse")
             return
         }

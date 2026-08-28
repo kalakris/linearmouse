@@ -480,31 +480,11 @@ final class TouchScrollEngineTests: XCTestCase {
 }
 
 final class TouchStreamFrameTests: XCTestCase {
-    func testParsesWellFormedV2Payload() {
-        // pad 0, x = 0x0403 (1027), y = 0x0201 (513), z = 42, touched + scroll mode.
-        let frame = TouchStreamFrame(
-            reportBytes: [0x00, 0x03, 0x04, 0x01, 0x02, 0x2A, 0x03],
-            protocolVersion: 2,
-            timestamp: 1.5
-        )
-        XCTAssertEqual(frame?.padID, 0)
-        XCTAssertEqual(frame?.contactID, 0)
-        XCTAssertEqual(frame?.x, 1027)
-        XCTAssertEqual(frame?.y, 513)
-        XCTAssertEqual(frame?.z, 42)
-        XCTAssertEqual(frame?.touched, true)
-        XCTAssertEqual(frame?.scrollMode, true)
-        XCTAssertNil(frame?.seq)
-        XCTAssertNil(frame?.deviceTimestampTicks)
-        XCTAssertEqual(frame?.timestamp, 1.5)
-    }
-
     func testParsesWellFormedV3Payload() {
         // pad 0, contact 1, x = 0x0403 (1027), y = 0x0201 (513), z = 42,
         // touched + scroll mode, seq 0x2B, timestamp 0x8001 ticks.
         let frame = TouchStreamFrame(
             reportBytes: [0x00, 0x01, 0x03, 0x04, 0x01, 0x02, 0x2A, 0x03, 0x2B, 0x01, 0x80],
-            protocolVersion: 3,
             timestamp: 1.5
         )
         XCTAssertEqual(frame?.padID, 0)
@@ -522,7 +502,6 @@ final class TouchStreamFrameTests: XCTestCase {
     func testParsesV3FixtureRoundTrip() {
         let frame = TouchStreamFrame(
             reportBytes: v3FrameBytes(x: 1234, y: 987, seq: 250, timestampTicks: 0xFFFE),
-            protocolVersion: 3,
             timestamp: 0
         )
         XCTAssertEqual(frame?.x, 1234)
@@ -533,16 +512,14 @@ final class TouchStreamFrameTests: XCTestCase {
 
     func testParsesFlagCombinations() {
         let release = TouchStreamFrame(
-            reportBytes: [0x00, 0, 0, 0, 0, 0, 0x00],
-            protocolVersion: 2,
+            reportBytes: v3FrameBytes(z: 0, flags: 0x00),
             timestamp: 0
         )
         XCTAssertEqual(release?.touched, false)
         XCTAssertEqual(release?.scrollMode, false)
 
         let pointerTime = TouchStreamFrame(
-            reportBytes: [0x00, 0, 0, 0, 0, 10, 0x01],
-            protocolVersion: 2,
+            reportBytes: v3FrameBytes(z: 10, flags: 0x01),
             timestamp: 0
         )
         XCTAssertEqual(pointerTime?.touched, true)
@@ -550,60 +527,44 @@ final class TouchStreamFrameTests: XCTestCase {
 
         // Reserved flag bits must not confuse parsing.
         let reservedBits = TouchStreamFrame(
-            reportBytes: [0x01, 0, 0, 0, 0, 10, 0xFF],
-            protocolVersion: 2,
+            reportBytes: v3FrameBytes(pad: 1, z: 10, flags: 0xFF),
             timestamp: 0
         )
         XCTAssertEqual(reservedBits?.padID, 1)
         XCTAssertEqual(reservedBits?.touched, true)
         XCTAssertEqual(reservedBits?.scrollMode, true)
 
-        // v3 flags live at byte 7.
-        let v3Release = TouchStreamFrame(
-            reportBytes: v3FrameBytes(flags: 0b10),
-            protocolVersion: 3,
+        // A scroll-mode release: flags live at byte 7.
+        let scrollRelease = TouchStreamFrame(
+            reportBytes: v3FrameBytes(z: 0, flags: 0b10),
             timestamp: 0
         )
-        XCTAssertEqual(v3Release?.touched, false)
-        XCTAssertEqual(v3Release?.scrollMode, true)
+        XCTAssertEqual(scrollRelease?.touched, false)
+        XCTAssertEqual(scrollRelease?.scrollMode, true)
     }
 
     func testRejectsShortReports() {
-        XCTAssertNil(TouchStreamFrame(reportBytes: [], protocolVersion: 2, timestamp: 0))
-        XCTAssertNil(TouchStreamFrame(reportBytes: [0x00, 0x01], protocolVersion: 2, timestamp: 0))
-        XCTAssertNil(TouchStreamFrame(reportBytes: [0, 0, 0, 0, 0, 0], protocolVersion: 2, timestamp: 0))
-        XCTAssertNil(TouchStreamFrame(reportBytes: [], protocolVersion: 3, timestamp: 0))
-        XCTAssertNil(TouchStreamFrame(reportBytes: [0, 0, 0, 0, 0, 0], protocolVersion: 3, timestamp: 0))
+        XCTAssertNil(TouchStreamFrame(reportBytes: [], timestamp: 0))
+        XCTAssertNil(TouchStreamFrame(reportBytes: [0x00, 0x01], timestamp: 0))
+        XCTAssertNil(TouchStreamFrame(reportBytes: [0, 0, 0, 0, 0, 0], timestamp: 0))
     }
 
-    /// The feature report is the version authority: a validated-v3 device
-    /// never legitimately emits 7-byte frames, so a frame long enough for v2
-    /// but short of the v3 layout is malformed and rejected rather than
-    /// reinterpreted with the v2 layout.
-    func testRejectsV3VersionFrameWithOnlyV2Length() {
+    /// 7-byte frames are the dropped legacy-v2 layout — always malformed
+    /// now, never reinterpreted.
+    func testRejectsLegacyV2LengthFrames() {
         XCTAssertNil(TouchStreamFrame(
             reportBytes: [0x00, 0x03, 0x04, 0x01, 0x02, 0x2A, 0x03],
-            protocolVersion: 3,
             timestamp: 0
         ))
     }
 
     func testIgnoresTrailingPadding() {
         let frame = TouchStreamFrame(
-            reportBytes: [0x00, 0x03, 0x04, 0x01, 0x02, 0x2A, 0x03, 0x00, 0x00],
-            protocolVersion: 2,
+            reportBytes: v3FrameBytes(x: 1027, seq: 7) + [0x00, 0x00],
             timestamp: 0
         )
         XCTAssertEqual(frame?.x, 1027)
-        XCTAssertEqual(frame?.scrollMode, true)
-
-        let v3Frame = TouchStreamFrame(
-            reportBytes: v3FrameBytes(x: 1027, seq: 7) + [0x00, 0x00],
-            protocolVersion: 3,
-            timestamp: 0
-        )
-        XCTAssertEqual(v3Frame?.x, 1027)
-        XCTAssertEqual(v3Frame?.seq, 7)
+        XCTAssertEqual(frame?.seq, 7)
     }
 }
 

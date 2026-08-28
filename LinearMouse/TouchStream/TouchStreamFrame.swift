@@ -22,18 +22,10 @@ import Foundation
 ///     bytes 9-10: timestamp, uint16 little-endian, 100 µs units,
 ///                 wraps at 6.5536 s (device-side sample time)
 ///
-/// Protocol v2 (legacy, 7 bytes — no contact_id/seq/timestamp):
-///
-///     byte 0: pad_id
-///     bytes 1-2: x, uint16 little-endian
-///     bytes 3-4: y, uint16 little-endian
-///     byte 5: z
-///     byte 6: flags: bit0 = touched, bit1 = scroll mode
-///
-/// Which layout applies is decided by the *validated feature report's*
-/// protocol version (see `TouchStreamCapabilities`) — the feature report is
-/// the version authority, so frames shorter than that version's layout are
-/// malformed and rejected rather than second-guessed as the older layout.
+/// This is the only layout: v2 support was dropped 2026-08-28 (v2 only ever
+/// ran on the pre-release prototype firmware; the feature report — see
+/// `TouchStreamCapabilities` — is the version authority and now validates
+/// v3 alone). Frames shorter than the layout are malformed and rejected.
 ///
 /// Cadence: one report per sample while touched (~100 Hz), exactly one release
 /// report (touched = 0) at lift-off, nothing while idle.
@@ -43,20 +35,13 @@ struct TouchStreamFrame: Equatable {
     /// (`TouchStreamCapabilities.featureReportID`).
     static let reportID: UInt32 = 0x04
 
-    static let v2PayloadLength = 7 // pad_id + x(2) + y(2) + z + flags
-    static let v3PayloadLength = 11 // + contact_id, seq, timestamp(2)
-
-    /// The wire payload length for a protocol version (v3 for any version
-    /// newer than v2, since unknown versions never pass feature-report
-    /// validation in the first place).
-    static func payloadLength(forProtocolVersion version: Int) -> Int {
-        version <= 2 ? v2PayloadLength : v3PayloadLength
-    }
+    /// pad_id, contact_id, x(2), y(2), z, flags, seq, timestamp(2).
+    static let payloadLength = 11
 
     var padID: UInt8
 
-    /// v3: distinguishes fingers on multi-touch pads; 0 on single-touch
-    /// hardware. Parsed as 0 for v2 frames (which predate the field).
+    /// Distinguishes fingers on multi-touch pads; 0 on single-touch
+    /// hardware.
     var contactID: UInt8
 
     var x: Int
@@ -65,36 +50,36 @@ struct TouchStreamFrame: Equatable {
     var touched: Bool
     var scrollMode: Bool
 
-    /// v3: the per-pad wire sequence counter (+1 per emitted report, wraps).
-    /// `nil` for v2 frames. Diagnostic only — silent drops are surfaced by
-    /// `TouchStreamManager`'s gap logging.
+    /// The per-pad wire sequence counter (+1 per emitted report, wraps).
+    /// `nil` only on synthesized frames (e.g. the stale-touch release),
+    /// which never cross the wire. Diagnostic only — silent drops are
+    /// surfaced by `TouchStreamManager`'s gap logging.
     var seq: UInt8?
 
-    /// v3: the raw device-side sample time in 100 µs ticks, wrapping at
-    /// 6.5536 s. `nil` for v2 frames. `TouchStreamManager` unwraps this onto
-    /// a continuous timeline (`TouchStreamDeviceClock`) and rewrites
-    /// `timestamp` with it before the frame reaches the engine.
+    /// The raw device-side sample time in 100 µs ticks, wrapping at
+    /// 6.5536 s. `nil` only on synthesized frames. `TouchStreamManager`
+    /// unwraps this onto a continuous timeline (`TouchStreamDeviceClock`)
+    /// and rewrites `timestamp` with it before the frame reaches the
+    /// engine.
     var deviceTimestampTicks: UInt16?
 
     /// The engine-timeline timestamp. At parse time this is the host receive
-    /// time (system uptime) captured in the HID report callback; for v3
-    /// frames the manager replaces it with the reconstructed device-side
-    /// sample time so velocity is immune to BLE connection-interval batching.
+    /// time (system uptime) captured in the HID report callback; the manager
+    /// replaces it with the reconstructed device-side sample time so
+    /// velocity is immune to BLE connection-interval batching.
     var timestamp: TimeInterval
 
     /// Parses a report payload in place — no per-report heap allocation on
-    /// the ~100 Hz HID-callback path — using the layout implied by
-    /// `protocolVersion` (from the validated feature report). Parsing starts
-    /// at `offset` (non-zero when the transport prepends the report ID
-    /// byte). Returns `nil` for payloads too short for that version's
-    /// layout; extra trailing bytes (e.g. padding) are ignored.
+    /// the ~100 Hz HID-callback path. Parsing starts at `offset` (non-zero
+    /// when the transport prepends the report ID byte). Returns `nil` for
+    /// payloads too short for the layout; extra trailing bytes (e.g.
+    /// padding) are ignored.
     init?(
         reportBytes: UnsafeRawBufferPointer,
         offset: Int = 0,
-        protocolVersion: Int,
         timestamp: TimeInterval
     ) {
-        guard reportBytes.count - offset >= Self.payloadLength(forProtocolVersion: protocolVersion) else {
+        guard reportBytes.count - offset >= Self.payloadLength else {
             return nil
         }
 
@@ -102,29 +87,23 @@ struct TouchStreamFrame: Equatable {
             reportBytes[offset + index]
         }
 
-        // v2 and v3 share the layout except for v3's leading contact_id
-        // (which shifts everything after pad_id by one byte) and its
-        // trailing seq/timestamp.
-        let isV3 = protocolVersion > 2
-        let o = isV3 ? 1 : 0
-
         padID = byte(0)
-        contactID = isV3 ? byte(1) : 0
-        x = Int(byte(1 + o)) | (Int(byte(2 + o)) << 8)
-        y = Int(byte(3 + o)) | (Int(byte(4 + o)) << 8)
-        z = Int(byte(5 + o))
-        touched = byte(6 + o) & 0x1 != 0
-        scrollMode = byte(6 + o) & 0x2 != 0
-        seq = isV3 ? byte(7 + o) : nil
-        deviceTimestampTicks = isV3 ? UInt16(byte(8 + o)) | (UInt16(byte(9 + o)) << 8) : nil
+        contactID = byte(1)
+        x = Int(byte(2)) | (Int(byte(3)) << 8)
+        y = Int(byte(4)) | (Int(byte(5)) << 8)
+        z = Int(byte(6))
+        touched = byte(7) & 0x1 != 0
+        scrollMode = byte(7) & 0x2 != 0
+        seq = byte(8)
+        deviceTimestampTicks = UInt16(byte(9)) | (UInt16(byte(10)) << 8)
         self.timestamp = timestamp
     }
 
     /// Array-based convenience over the buffer parse, for callers that
     /// already hold a copied payload (e.g. test fixtures).
-    init?(reportBytes: [UInt8], protocolVersion: Int, timestamp: TimeInterval) {
+    init?(reportBytes: [UInt8], timestamp: TimeInterval) {
         guard let frame = reportBytes.withUnsafeBytes({
-            TouchStreamFrame(reportBytes: $0, protocolVersion: protocolVersion, timestamp: timestamp)
+            TouchStreamFrame(reportBytes: $0, timestamp: timestamp)
         }) else {
             return nil
         }

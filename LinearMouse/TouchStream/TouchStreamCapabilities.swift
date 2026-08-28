@@ -11,8 +11,8 @@ enum TouchStreamAxis: Equatable {
 }
 
 /// Capabilities self-reported by a streaming device through the touch-stream
-/// feature report (protocol v2 or v3, same report ID 0x04 as the input
-/// report, read with `IOHIDDeviceGetReport(kIOHIDReportTypeFeature)`).
+/// feature report (protocol v3, same report ID 0x04 as the input report,
+/// read with `IOHIDDeviceGetReport(kIOHIDReportTypeFeature)`).
 ///
 /// v3 wire format (20-byte payload):
 ///
@@ -33,32 +33,21 @@ enum TouchStreamAxis: Equatable {
 ///     +6: max contacts (1 on a Pinnacle)
 ///     +7: reserved (0)
 ///
-/// v2 wire format (legacy, 8-byte payload, one geometry for the whole
-/// device — parsed into a single-slot equivalent):
-///
-///     byte 0: protocol version (2)
-///     byte 1: pads-present bitmask (bit0 = right pad, bit1 = left pad)
-///     byte 2: resolution in counts/mm
-///     byte 3: orientation bits (as above)
-///     bytes 4-5: x-max, uint16 little-endian
-///     bytes 6-7: y-max, uint16 little-endian
-///
 /// A device whose feature report is absent, short, or reports an unsupported
-/// version is treated as non-streaming.
+/// version is treated as non-streaming. (Legacy v2 support was dropped
+/// 2026-08-28: v2 only ever ran on the pre-release prototype firmware, so
+/// the v0-prototype rollback binaries now get wheel-fallback scrolling
+/// only.)
 struct TouchStreamCapabilities: Equatable {
     static let featureReportID: CFIndex = 0x04
-    static let v2PayloadLength = 8
-    static let v3PayloadLength = 20
+    static let payloadLength = 20
 
-    /// The protocol versions this build knows how to consume. v2 remains
-    /// accepted so older firmware / rollback binaries keep streaming; the
-    /// feature report itself is the v2 addition — no v1 report ever existed
-    /// — and anything newer is treated as non-streaming rather than guessed
-    /// at.
-    static let supportedVersions: ClosedRange<Int> = 2 ... 3
+    /// The protocol versions this build knows how to consume. Anything
+    /// else — older (v2 is dropped, v1 never existed) or newer — is treated
+    /// as non-streaming rather than guessed at.
+    static let supportedVersions: ClosedRange<Int> = 3 ... 3
 
-    /// Per-pad geometry and orientation (a v3 pad slot; v2's single device
-    /// geometry maps onto one of these for each present pad).
+    /// Per-pad geometry and orientation (one pad slot).
     struct Pad: Equatable {
         /// Pad resolution in counts/mm; 0 = unknown.
         var countsPerMM: Int
@@ -67,8 +56,7 @@ struct TouchStreamCapabilities: Equatable {
         var invertY: Bool
         var xMax: Int
         var yMax: Int
-        /// Maximum simultaneous contacts (1 on a Pinnacle). v2 predates the
-        /// field and implies 1.
+        /// Maximum simultaneous contacts (1 on a Pinnacle).
         var maxContacts: Int
 
         init(
@@ -89,8 +77,7 @@ struct TouchStreamCapabilities: Equatable {
             self.maxContacts = maxContacts
         }
 
-        /// Parses an 8-byte v3 pad slot (also the byte layout of the v2
-        /// geometry fields at offset 2, whose first six bytes coincide).
+        /// Parses an 8-byte pad slot.
         init(slotBytes: ArraySlice<UInt8>) {
             let bytes = Array(slotBytes)
             countsPerMM = Int(bytes[0])
@@ -105,11 +92,10 @@ struct TouchStreamCapabilities: Equatable {
 
     var version: Int
     var padsPresent: UInt8
-    /// v3 capabilities byte (bit0 reserved for the mode gate); 0 for v2.
+    /// Capabilities byte (bit0 reserved for the mode gate).
     var capabilityBits: UInt8
     /// Per-pad capabilities keyed by pad_id, one entry per bit set in
-    /// `padsPresent`. v2 maps its single device geometry to every present
-    /// pad.
+    /// `padsPresent`.
     var pads: [UInt8: Pad]
 
     init?(reportBytes: [UInt8]) {
@@ -120,42 +106,29 @@ struct TouchStreamCapabilities: Equatable {
             return nil
         }
 
-        let expectedLength = version >= 3 ? Self.v3PayloadLength : Self.v2PayloadLength
-        guard reportBytes.count >= expectedLength else {
+        guard reportBytes.count >= Self.payloadLength else {
             return nil
         }
 
         self.version = version
         padsPresent = reportBytes[1]
+        capabilityBits = reportBytes[2]
 
         var pads: [UInt8: Pad] = [:]
-        if version >= 3 {
-            capabilityBits = reportBytes[2]
-            // Slots describe present pads in ascending pad_id order.
-            var slotOffset = 4
-            for padID in Self.presentPadIDs(padsPresent) {
-                guard slotOffset + 8 <= reportBytes.count else {
-                    break // more pads advertised than slots carried
-                }
-                pads[padID] = Pad(slotBytes: reportBytes[slotOffset ..< slotOffset + 8])
-                slotOffset += 8
+        // Slots describe present pads in ascending pad_id order.
+        var slotOffset = 4
+        for padID in Self.presentPadIDs(padsPresent) {
+            guard slotOffset + 8 <= reportBytes.count else {
+                break // more pads advertised than slots carried
             }
-        } else {
-            capabilityBits = 0
-            // v2 carries one geometry for the whole device; map it to every
-            // present pad (single-slot equivalent). The v2 geometry bytes at
-            // offset 2 share the slot layout's first six bytes; max contacts
-            // defaults to 1, which is exactly what v2 implies.
-            let single = Pad(slotBytes: reportBytes[2 ..< 8])
-            for padID in Self.presentPadIDs(padsPresent) {
-                pads[padID] = single
-            }
+            pads[padID] = Pad(slotBytes: reportBytes[slotOffset ..< slotOffset + 8])
+            slotOffset += 8
         }
         self.pads = pads
     }
 
     init(
-        version: Int = 2,
+        version: Int = 3,
         padsPresent: UInt8 = 0x1,
         capabilityBits: UInt8 = 0,
         countsPerMM: Int = 38,
