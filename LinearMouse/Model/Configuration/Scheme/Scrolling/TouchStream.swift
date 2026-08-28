@@ -182,7 +182,7 @@ extension Scheme.Scrolling.TouchStream.Acceleration {
     static let exponentRange: ClosedRange<Double> = 0 ... 2
     static let defaultExponent = 0.5
 
-    static let referenceSpeedRange: ClosedRange<Double> = 50 ... 20000
+    static let referenceSpeedRange: ClosedRange<Double> = 50 ... 20_000
     static let defaultReferenceSpeed = 800.0
 
     static let minGainRange: ClosedRange<Double> = 0.05 ... 1.0
@@ -244,7 +244,7 @@ extension Scheme.Scrolling.TouchStream.Momentum {
     static let startThresholdRange: ClosedRange<Double> = 0 ... 5000
     static let defaultStartThreshold = 100.0
 
-    static let maxSpeedRange: ClosedRange<Double> = 100 ... 50000
+    static let maxSpeedRange: ClosedRange<Double> = 100 ... 50_000
     static let defaultMaxSpeed = 8000.0
 
     var resolvedDecayTimeConstant: TimeInterval {
@@ -274,4 +274,3 @@ extension Scheme.Scrolling.TouchStream.Momentum {
         }
     }
 }
-

@@ -72,7 +72,11 @@ final class TouchScrollEngineTests: XCTestCase {
 
         XCTAssertEqual(dragEvents.first, .touchBegan)
         let changedDeltas: [Double] = dragEvents.compactMap {
-            if case let .touchChanged(deltaY) = $0 { return deltaY } else { return nil }
+            if case let .touchChanged(deltaY) = $0 {
+                return deltaY
+            } else {
+                return nil
+            }
         }
         XCTAssertEqual(changedDeltas.count, 11)
         // 25 counts * 0.25 points per count per frame.
@@ -88,7 +92,11 @@ final class TouchScrollEngineTests: XCTestCase {
         }
         XCTAssertGreaterThan(firstDelta, 0)
         XCTAssertTrue(momentumEvents.dropFirst().dropLast().allSatisfy {
-            if case .momentumChanged = $0 { return true } else { return false }
+            if case .momentumChanged = $0 {
+                return true
+            } else {
+                return false
+            }
         })
         XCTAssertEqual(momentumEvents.last, .momentumEnded)
         XCTAssertFalse(engine.wantsMomentumTicks)
@@ -178,7 +186,11 @@ final class TouchScrollEngineTests: XCTestCase {
         let (dragEvents, liftTime) = performFlick(on: engine)
 
         let changedDeltas: [Double] = dragEvents.compactMap {
-            if case let .touchChanged(deltaY) = $0 { return deltaY } else { return nil }
+            if case let .touchChanged(deltaY) = $0 {
+                return deltaY
+            } else {
+                return nil
+            }
         }
         XCTAssertTrue(changedDeltas.allSatisfy { $0 < 0 })
 
@@ -627,7 +639,7 @@ final class TouchStreamDeviceClockTests: XCTestCase {
         _ = clock.reconstruct(ticks: 0, arrival: 10.0)
         // 30000 ticks = 3 s > the ~2 s discontinuity threshold: distrust the
         // wrapped delta and re-anchor to arrival.
-        XCTAssertEqual(clock.reconstruct(ticks: 30000, arrival: 13.1), 13.1)
+        XCTAssertEqual(clock.reconstruct(ticks: 30_000, arrival: 13.1), 13.1)
     }
 
     func testLongArrivalSilenceReAnchorsDespiteSmallDeviceDelta() {
@@ -644,13 +656,13 @@ final class TouchStreamDeviceClockTests: XCTestCase {
         var clock = TouchStreamDeviceClock()
 
         _ = clock.reconstruct(ticks: 0, arrival: 20.0)
-        let advanced = clock.reconstruct(ticks: 10000, arrival: 20.05) // +1 s device time
+        let advanced = clock.reconstruct(ticks: 10_000, arrival: 20.05) // +1 s device time
         XCTAssertEqual(advanced, 21.0, accuracy: 1e-9)
 
         // A discontinuity whose arrival time sits behind the reconstructed
         // timeline clamps to the timeline instead of stepping backwards.
-        _ = clock.reconstruct(ticks: 40000, arrival: 20.9)
-        XCTAssertGreaterThanOrEqual(clock.reconstruct(ticks: 40100, arrival: 20.91), advanced)
+        _ = clock.reconstruct(ticks: 40_000, arrival: 20.9)
+        XCTAssertGreaterThanOrEqual(clock.reconstruct(ticks: 40_100, arrival: 20.91), advanced)
     }
 
     func testResetForgetsTheAnchor() {

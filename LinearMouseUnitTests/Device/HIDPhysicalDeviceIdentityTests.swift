@@ -27,15 +27,15 @@ final class HIDPhysicalDeviceIdentityTests: XCTestCase {
     func testSplitCollectionsSharingLocationIDMatch() {
         // Vendor collection and mouse collection of the same USB keyboard:
         // different services, same USB location.
-        let stream = HIDPhysicalDeviceIdentity(registryID: 100, locationID: 0x14200000)
-        let pointer = HIDPhysicalDeviceIdentity(registryID: 101, locationID: 0x14200000)
+        let stream = HIDPhysicalDeviceIdentity(registryID: 100, locationID: 0x1420_0000)
+        let pointer = HIDPhysicalDeviceIdentity(registryID: 101, locationID: 0x1420_0000)
         XCTAssertTrue(stream.isSamePhysicalDevice(as: pointer))
         XCTAssertTrue(pointer.isSamePhysicalDevice(as: stream))
     }
 
     func testDifferentLocationIDsDoNotMatch() {
-        let go60 = HIDPhysicalDeviceIdentity(registryID: 100, locationID: 0x14200000)
-        let sofle = HIDPhysicalDeviceIdentity(registryID: 200, locationID: 0x14300000)
+        let go60 = HIDPhysicalDeviceIdentity(registryID: 100, locationID: 0x1420_0000)
+        let sofle = HIDPhysicalDeviceIdentity(registryID: 200, locationID: 0x1430_0000)
         XCTAssertFalse(go60.isSamePhysicalDevice(as: sofle))
     }
 
@@ -45,12 +45,12 @@ final class HIDPhysicalDeviceIdentityTests: XCTestCase {
         // scrolling would be suppressed by the Go60's stream.
         let go60 = HIDPhysicalDeviceIdentity(
             registryID: 100,
-            locationID: 0x14200000,
+            locationID: 0x1420_0000,
             serialNumber: "ZMK"
         )
         let sofle = HIDPhysicalDeviceIdentity(
             registryID: 200,
-            locationID: 0x14300000,
+            locationID: 0x1430_0000,
             serialNumber: "ZMK"
         )
         XCTAssertFalse(go60.isSamePhysicalDevice(as: sofle))
@@ -77,7 +77,7 @@ final class HIDPhysicalDeviceIdentityTests: XCTestCase {
         // strings differ, so no match.
         let go60USB = HIDPhysicalDeviceIdentity(
             registryID: 100,
-            locationID: 0x14200000,
+            locationID: 0x1420_0000,
             serialNumber: "ZMK"
         )
         let sofleBLE = HIDPhysicalDeviceIdentity(
@@ -105,11 +105,11 @@ final class HIDPhysicalDeviceIdentityTests: XCTestCase {
         // Location inequality is decisive even when a (bogus) shared ancestor
         // is present.
         let a = HIDPhysicalDeviceIdentity(
-            locationID: 0x14200000,
+            locationID: 0x1420_0000,
             transportAncestorRegistryID: 50
         )
         let b = HIDPhysicalDeviceIdentity(
-            locationID: 0x14300000,
+            locationID: 0x1430_0000,
             transportAncestorRegistryID: 50
         )
         XCTAssertFalse(a.isSamePhysicalDevice(as: b))
@@ -126,7 +126,7 @@ final class HIDPhysicalDeviceIdentityTests: XCTestCase {
     func testDisjointDiscriminatorsAreIndeterminate() {
         // One side only has a location, the other only a serial: nothing is
         // comparable, so the conservative answer is "not the same device".
-        let a = HIDPhysicalDeviceIdentity(locationID: 0x14200000)
+        let a = HIDPhysicalDeviceIdentity(locationID: 0x1420_0000)
         let b = HIDPhysicalDeviceIdentity(serialNumber: "aa-bb-cc-dd-ee-ff")
         XCTAssertFalse(a.isSamePhysicalDevice(as: b))
         XCTAssertFalse(b.isSamePhysicalDevice(as: a))

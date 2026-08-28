@@ -215,7 +215,8 @@ final class TouchStreamManager: ObservableObject {
 
         // The pointer device that anchors scheme matching can enumerate after
         // the vendor collection; re-resolve when the device list settles.
-        DeviceManager.shared.$devices
+        DeviceManager.shared
+            .$devices
             .debounce(for: 0.1, scheduler: RunLoop.main)
             .sink { [weak self] _ in
                 self?.reconfigure()
@@ -341,7 +342,8 @@ final class TouchStreamManager: ObservableObject {
                 withDevice: pointerDevice,
                 withProcess: nil,
                 withDisplay: nil
-            ).scrolling
+            )
+            .scrolling
         }
 
         // The pointer device has not enumerated (yet) or could not be linked
@@ -435,14 +437,18 @@ final class TouchStreamManager: ObservableObject {
                 manager.deviceDidDisconnect(device)
             }
         }, context)
-        IOHIDManagerRegisterInputReportCallback(manager, { context, result, sender, type, reportID, report, reportLength in
-            guard let context, let sender, result == kIOReturnSuccess, type == kIOHIDReportTypeInput else {
-                return
-            }
-            let manager = Unmanaged<TouchStreamManager>.fromOpaque(context).takeUnretainedValue()
-            let device = Unmanaged<IOHIDDevice>.fromOpaque(sender).takeUnretainedValue()
-            manager.handleReport(from: device, reportID: reportID, bytes: report, length: reportLength)
-        }, context)
+        IOHIDManagerRegisterInputReportCallback(
+            manager,
+            { context, result, sender, type, reportID, report, reportLength in
+                guard let context, let sender, result == kIOReturnSuccess, type == kIOHIDReportTypeInput else {
+                    return
+                }
+                let manager = Unmanaged<TouchStreamManager>.fromOpaque(context).takeUnretainedValue()
+                let device = Unmanaged<IOHIDDevice>.fromOpaque(sender).takeUnretainedValue()
+                manager.handleReport(from: device, reportID: reportID, bytes: report, length: reportLength)
+            },
+            context
+        )
 
         // Schedule on the event thread's run loop so input reports arrive
         // directly on the thread that consumes them — no per-report hop, no

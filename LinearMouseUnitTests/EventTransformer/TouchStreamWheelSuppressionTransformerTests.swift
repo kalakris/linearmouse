@@ -7,7 +7,7 @@ import XCTest
 
 final class TouchStreamWheelSuppressionTransformerTests: XCTestCase {
     private let context = EventTransformerContext(device: nil)
-    private let identity = HIDPhysicalDeviceIdentity(registryID: 0x1234, locationID: 0x14200000)
+    private let identity = HIDPhysicalDeviceIdentity(registryID: 0x1234, locationID: 0x1420_0000)
 
     private func makeScrollEvent(synthetic: Bool = false) -> CGEvent {
         let event = CGEvent(
@@ -70,17 +70,17 @@ final class TouchStreamWheelSuppressionTransformerTests: XCTestCase {
         XCTAssertNotNil(transformer.transform(makeScrollEvent(synthetic: true), in: context))
     }
 
-    func testIgnoresNonScrollEvents() {
+    func testIgnoresNonScrollEvents() throws {
         let transformer = TouchStreamWheelSuppressionTransformer(
             deviceIdentity: identity
         ) { _ in true }
 
-        let moveEvent = CGEvent(
+        let moveEvent = try XCTUnwrap(CGEvent(
             mouseEventSource: nil,
             mouseType: .mouseMoved,
             mouseCursorPosition: .zero,
             mouseButton: .left
-        )!
+        ))
         XCTAssertNotNil(transformer.transform(moveEvent, in: context))
     }
 

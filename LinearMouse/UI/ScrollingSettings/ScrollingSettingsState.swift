@@ -40,7 +40,8 @@ class ScrollingSettingsState: ObservableObject {
             .store(in: &subscriptions)
 
         // "Raw Touch" mode availability follows stream device presence.
-        TouchStreamManager.shared.$streamingDeviceIdentities
+        TouchStreamManager.shared
+            .$streamingDeviceIdentities
             .receive(on: RunLoop.main)
             .removeDuplicates()
             .sink { [weak self] _ in

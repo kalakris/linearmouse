@@ -196,14 +196,31 @@ struct TouchStreamCapabilities: Equatable {
         pads[0] ?? pads.min { $0.key < $1.key }?.value
     }
 
-    // Primary-pad conveniences, keeping single-pad call sites (engine
-    // configuration, logging, tests) version-agnostic.
-    var countsPerMM: Int { primaryPad?.countsPerMM ?? 0 }
-    var rotate90: Bool { primaryPad?.rotate90 ?? false }
-    var invertX: Bool { primaryPad?.invertX ?? false }
-    var invertY: Bool { primaryPad?.invertY ?? false }
-    var xMax: Int { primaryPad?.xMax ?? 0 }
-    var yMax: Int { primaryPad?.yMax ?? 0 }
+    /// Primary-pad conveniences, keeping single-pad call sites (engine
+    /// configuration, logging, tests) version-agnostic.
+    var countsPerMM: Int {
+        primaryPad?.countsPerMM ?? 0
+    }
+
+    var rotate90: Bool {
+        primaryPad?.rotate90 ?? false
+    }
+
+    var invertX: Bool {
+        primaryPad?.invertX ?? false
+    }
+
+    var invertY: Bool {
+        primaryPad?.invertY ?? false
+    }
+
+    var xMax: Int {
+        primaryPad?.xMax ?? 0
+    }
+
+    var yMax: Int {
+        primaryPad?.yMax ?? 0
+    }
 
     /// Parses a feature-report buffer into supported capabilities, tolerating
     /// transports that prepend the report ID byte. Returns `nil` for short
